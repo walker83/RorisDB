@@ -2,129 +2,72 @@
 
 # 🦎 HarnessDB
 
-### 万能数据库变色龙 - 14种协议，1个二进制文件
+### 数据库界的 LocalStack — 14 种协议，1 个二进制文件
 
 **一个二进制文件。十四种协议。零基础设施。**
 
-**🎯 阿里云全栈兼容**
-**🚀 14种数据库协议合二为一**
-**⚡ 97% 测试通过率 (180/185)**
-
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-2024--edition-orange.svg)](https://www.rust-lang.org)
-[![Version](https://img.shields.io/badge/Version-1.0.0-green.svg)]()
-[![Protocols](https://img.shields.io/badge/Protocols-14-blue.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-180%20passed-brightgreen.svg)]()
-[![Stars](https://img.shields.io/github/stars/walker83/HarnessDB.svg?style=social&label=Star)](https://github.com/walker83/HarnessDB)
+[![Protocols](https://img.shields.io/badge/Protocols-14-blue.svg)](#-兼容性矩阵)
 
-[English](../../README.md) · [中文文档](README.md) · [快速开始](#-快速开始) · [支持的协议](#-支持的协议) · [架构](#-架构)
+[English](../../README.md) · [中文文档](README.md) · [快速开始](#-快速开始) · [兼容性矩阵](#-兼容性矩阵) · [架构](#-架构)
 
 ---
 
-**🔥 如果用一个二进制文件就能替代 MySQL、Redis、MongoDB、ClickHouse、Elasticsearch、Oracle、Cassandra、PostgreSQL 等数据库，你会感兴趣吗？**
+**别再为了跑集成测试就启动 14 个 Docker 容器了。**
 
 </div>
 
 ---
 
-## 🎯 HarnessDB 是什么？
+## HarnessDB 是什么？
 
-HarnessDB 是一个**通用数据库仿真平台**，可以同时使用**14种不同的数据库协议**。使用 Rust 和 Apache DataFusion 构建，它是世界上第一个可以替代以下数据库的系统：
+HarnessDB 是一个**本地开发与 CI 测试平台**，用一个 Rust 二进制文件同时模拟 **14 种数据库协议**。可以把它理解为数据库界的 [LocalStack](https://localstack.cloud/) — 不是模拟 AWS 服务，而是模拟 MySQL、Redis、MongoDB、PostgreSQL、ClickHouse、Elasticsearch 等等。
 
-- **关系型数据库**: MySQL, PostgreSQL, Oracle
-- **NoSQL 数据库**: Redis, MongoDB, Cassandra
-- **OLAP 数据库**: ClickHouse, Elasticsearch, AnalyticDB
-- **云数据库**: MaxCompute (ODPS), Hologres, TableStore, Lindorm
-- **专用数据库**: InfluxDB (时序), Vector Database (向量/AI)
+**适合用来做：**
+- 本地开发，不用装 14 个数据库服务器
+- CI/CD 流水线，几秒钟启动完整数据库栈
+- 跨数据库协议的集成测试
+- 阿里云本地开发（MaxCompute、Hologres、TableStore）
 
-**所有这些，只需要一个 ~50MB 的二进制文件。无需容器，无需集群，无需云账单。**
+**不适合用来做：**
+- 生产环境 — 它是仿真层，不是真实数据库的替代品
+- 高并发低延迟的 Redis 场景
+- 生产级 MongoDB 聚合管道
+- ACID 事务保证
 
-### 🎪 数据库变色龙
+> HarnessDB 通过 Apache DataFusion 把所有数据存储在 Parquet 文件中。对开发/测试来说速度足够快，但它不是专业数据库的生产替代品。
 
-就像变色龙适应环境一样，HarnessDB 适应**任何数据库协议**：
+## 快速演示
 
 ```bash
-# 启动 HarnessDB
-./harness-db
+# 启动 HarnessDB — 所有 14 种协议在默认端口监听
+./target/release/harness-db
 
-# 使用任何客户端连接
-mysql -h 127.0.0.1 -P 9030          # MySQL 客户端
-psql -h 127.0.0.1 -P 15432          # PostgreSQL 客户端
-redis-cli -h 127.0.0.1 -p 6379      # Redis 客户端
-mongo --host 127.0.0.1 --port 27017 # MongoDB 客户端
-curl http://127.0.0.1:9200          # Elasticsearch API
-clickhouse-client --port 9000       # ClickHouse 客户端
-# ... 还有8种协议！
+# 终端 1: MySQL
+mysql -h 127.0.0.1 -P 9030 -uroot -e "CREATE TABLE users (id INT, name VARCHAR(50)); INSERT INTO users VALUES (1, 'Alice'); SELECT * FROM users;"
+
+# 终端 2: Redis
+redis-cli -h 127.0.0.1 -p 6379 SET mykey "hello" && redis-cli -h 127.0.0.1 -p 6379 GET mykey
+
+# 终端 3: MongoDB
+mongosh --host 127.0.0.1 --port 27017 --eval "db.users.insertOne({name: 'Bob', age: 30}); db.users.find()"
+
+# 终端 4: Elasticsearch
+curl -s -X PUT "http://127.0.0.1:9200/my-index/_doc/1" -H 'Content-Type: application/json' -d '{"title": "Hello"}'
+curl -s "http://127.0.0.1:9200/my-index/_search" -H 'Content-Type: application/json' -d '{"query": {"match_all": {}}}'
+
+# 终端 5: ClickHouse
+curl -s "http://127.0.0.1:8123/" -d "CREATE TABLE test (id Int32, name String) ENGINE=Memory"
+curl -s "http://127.0.0.1:8123/" -d "INSERT INTO test VALUES (1, 'Charlie')"
+curl -s "http://127.0.0.1:8123/" -d "SELECT * FROM test"
 ```
 
-## 🚀 为什么选择 HarnessDB？
+> 📹 **TODO**: 用 asciinema 录制或 GIF 替换此段，展示所有协议的实际运行效果。
 
-### 对于开发者
+## 🚀 快速开始
 
-- **本地开发**: 无需安装 MySQL、Redis、MongoDB 即可测试
-- **CI/CD**: 几秒钟内启动完整的数据库栈进行测试
-- **学习**: 立即尝试14种不同的数据库系统
-- **原型设计**: 无需修改应用代码即可切换数据库
-
-### 对于企业
-
-- **降低成本**: 用一个系统替代14个不同的数据库系统
-- **简化运维**: 一个二进制文件即可部署、监控和维护
-- **多云兼容**: 兼容阿里云、AWS、Azure、GCP 服务
-- **迁移路径**: 轻松测试数据库系统之间的迁移
-
-### 对于阿里云用户
-
-- **MaxCompute 兼容**: 无需云成本即可本地测试 ODPS SQL
-- **Hologres 兼容**: 本地开发实时分析
-- **TableStore 兼容**: 为开发模拟 OTS
-- **Lindorm 兼容**: 本地测试类 HBase 工作负载
-
-## 📊 支持的协议（共14种）
-
-### 🔥 关系型数据库
-
-| 协议 | 端口 | 兼容 | 客户端 |
-|------|------|------|--------|
-| **MySQL** | 9030 | MySQL 5.7/8.0, RDS, Doris, StarRocks | `mysql` |
-| **PostgreSQL** | 15432 | PostgreSQL 14, Hologres | `psql` |
-| **Oracle** | 1521 | Oracle 11g+, PolarDB-O | SQL*Plus, JDBC |
-
-### 🎯 NoSQL 数据库
-
-| 协议 | 端口 | 兼容 | 客户端 |
-|------|------|------|--------|
-| **Redis** | 6379 | Redis 6+, Tair | `redis-cli`, 所有 Redis 驱动 |
-| **MongoDB** | 27017 | MongoDB 4.4+, ApsaraDB | `mongo`, 所有 MongoDB 驱动 |
-| **Cassandra** | 9042 | Cassandra 3.x+, ScyllaDB | `cqlsh`, 所有 Cassandra 驱动 |
-
-### 📈 OLAP 与分析型数据库
-
-| 协议 | 端口 | 兼容 | 客户端 |
-|------|------|------|--------|
-| **ClickHouse** | 8123 | ClickHouse 20+ | `clickhouse-client`, HTTP |
-| **Elasticsearch** | 9200 | Elasticsearch 7.x, OpenSearch | `curl`, 所有 ES 客户端 |
-| **AnalyticDB MySQL** | 3307 | AnalyticDB MySQL | `mysql` |
-
-### ☁️ 阿里云服务
-
-| 协议 | 端口 | 兼容 | 客户端 |
-|------|------|------|--------|
-| **MaxCompute** | 9031 | MaxCompute (ODPS) | `pyodps`, REST API |
-| **Hologres** | 15432 | Hologres | `psql` |
-| **TableStore** | 8087 | TableStore (OTS) | REST API, SDK |
-| **Lindorm** | 30030 | Lindorm, HBase | HBase shell |
-
-### 🎨 专用数据库
-
-| 协议 | 端口 | 兼容 | 客户端 |
-|------|------|------|--------|
-| **InfluxDB** | 8086 | InfluxDB 1.x, TSDB | `influx`, 行协议 |
-| **Vector DB** | 19530 | Milvus, Pinecone | REST API, gRPC |
-
-## ⚡ 快速开始
-
-### 1. 构建（或下载二进制文件）
+### 构建
 
 ```bash
 git clone https://github.com/walker83/HarnessDB.git
@@ -132,84 +75,103 @@ cd HarnessDB
 cargo build --release
 ```
 
-### 2. 启动
+### 运行
 
 ```bash
 ./target/release/harness-db
 ```
 
-就这么简单！所有14种协议现在都在各自的默认端口上监听。
+所有 14 种协议立即开始监听，无需配置文件。
 
-### 3. 使用任何客户端连接
+### 在 CI/CD 中使用
 
-#### MySQL
+```yaml
+# .github/workflows/test.yml
+name: 集成测试
+on: [push]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-```bash
-mysql -h 127.0.0.1 -P 9030 -uroot
+      - name: 构建 HarnessDB
+        run: cargo build --release
+
+      - name: 启动数据库栈
+        run: ./target/release/harness-db &
+        # MySQL :9030, Redis :6379, MongoDB :27017 等
+
+      - name: 等待 HarnessDB 就绪
+        run: |
+          for i in $(seq 1 30); do
+            mysql -h 127.0.0.1 -P 9030 -uroot -e "SELECT 1" 2>/dev/null && break
+            sleep 1
+          done
+
+      - name: 运行测试
+        run: |
+          # 你的应用现在可以连接 MySQL、Redis、MongoDB 等
+          # 不需要在 workflow 里配置 services: 容器！
+          npm test
 ```
 
-```sql
-CREATE DATABASE demo;
-USE demo;
-CREATE TABLE users (id INT, name VARCHAR(50), age INT);
-INSERT INTO users VALUES (1, 'Alice', 30);
-SELECT * FROM users;
+这替代了典型的需要多个 `services:` 容器的 CI 配置：
+
+```yaml
+# ❌ 之前：重、慢、复杂
+services:
+  mysql:
+    image: mysql:8.0
+    ports: ['3306:3306']
+    env:
+      MYSQL_ROOT_PASSWORD: test
+  redis:
+    image: redis:7
+    ports: ['6379:6379']
+  mongo:
+    image: mongo:6
+    ports: ['27017:27017']
+
+# ✅ 之后：一个二进制文件，<1 秒启动
+steps:
+  - run: ./harness-db &
 ```
 
-#### Redis
+## 📊 兼容性矩阵
 
-```bash
-redis-cli -h 127.0.0.1 -p 6379
-```
+以下是每个协议实际支持情况的诚实说明。我们相信透明比夸大其词更能赢得信任。
 
-```redis
-SET mykey "Hello HarnessDB"
-GET mykey
-HSET user:1 name "Bob" age 25
-HGETALL user:1
-```
+### ✅ 完整实现 — 可用于本地开发与测试
 
-#### MongoDB
+| 协议 | 端口 | 支持的命令 | 存储 | 备注 |
+|------|------|-----------|------|------|
+| **MySQL** | 9030 | CREATE/DROP TABLE/DB, INSERT, UPDATE, DELETE, SELECT (JOIN, WHERE, GROUP BY, ORDER BY, LIMIT, 聚合, 窗口函数) | Parquet + DataFusion | MySQL 5.7/8.0 兼容线协议 |
+| **PostgreSQL** | 15432 | 完整 wire protocol v3, 认证 (md5/scram-sha-256), 扩展查询, 20+ pg_catalog 表, information_schema | Parquet + DataFusion | Hologres 兼容, 支持 psql/JDBC/psycopg2 |
+| **Redis** | 6379 | 50+ 命令: String (GET/SET/MGET/INCR...), Hash (HGET/HSET/HGETALL...), List (LPUSH/RPOP/LRANGE...), Set (SADD/SMEMBERS...), Sorted Set (ZADD/ZRANGE...) | 内存 (DashMap) | RESP2/RESP3, 16 个数据库, TTL 支持 |
+| **MongoDB** | 27017 | insert, find, update, delete, count, aggregate ($match/$group/$sum/$count/$skip/$limit), ismaster/hello | 内存 (DashMap) | OP_MSG + 旧版 OP_QUERY 线协议 |
+| **ClickHouse** | 8123 | SELECT (WHERE, GROUP BY, ORDER BY, LIMIT, LIKE), INSERT, CREATE/DROP TABLE/DB, ALTER TABLE UPDATE/DELETE, SHOW/DESCRIBE | Parquet + DataFusion | HTTP 接口, TSV 输出 |
+| **Elasticsearch** | 9200 | 文档 CRUD, bulk API, search (match_all), 索引创建/删除/信息, _cat API, _cluster/health | Parquet + DataFusion | REST API, 标准 ES 风格 JSON 响应 |
+| **MaxCompute** | 9031 | 完整 REST API, SQL 实例 (提交/状态/结果), tunnel 上传/下载, 阿里云签名认证 (v1/v3/STS) | Parquet + DataFusion | pyodps SDK 兼容, 内置 SQL 转换器 |
+| **AnalyticDB MySQL** | 3307 | 完整 SQL (同 MySQL 协议) | Parquet + DataFusion | 底层使用 mysql-protocol |
 
-```bash
-mongo --host 127.0.0.1 --port 27017
-```
+### ⚠️ 部分实现 — 基本操作可用，高级功能缺失
 
-```javascript
-db.users.insert({name: "Charlie", age: 35})
-db.users.find()
-```
+| 协议 | 端口 | 可用 | 缺失 | 备注 |
+|------|------|------|------|------|
+| **Cassandra** | 9042 | Frame codec v4, 握手, SELECT 系统表, CREATE/DROP keyspace/table | INSERT/UPDATE/DELETE 是空操作（返回成功但不持久化） | 适合测试 CQL 连接逻辑 |
+| **InfluxDB** | 8086 | Line protocol 写入, SHOW DATABASES/MEASUREMENTS, CREATE/DROP DATABASE, 基本 SELECT | WHERE 时间过滤, InfluxQL, Flux | 写入路径可用，查询路径基础 |
+| **TableStore** | 8087 | 表 CRUD, 行 put/get/update/delete, 范围查询 | 批量操作, 条件更新, 原子计数器, TTL | REST API + JSON |
+| **Oracle** | 1521 | TNS 连接/握手, SELECT USER/SYSDATE/v$version, 基本标量表达式 | DML, 表访问, PL/SQL, 存储 | 适合测试 Oracle 驱动连通性 |
+| **TDS (SAP ASE)** | 5000 | TDS 5.0 登录, SQL 文本查询, 基本结果编码 | 预处理语句, 游标, 事务控制 | 线协议帧可用 |
 
-#### ClickHouse
+### 🔧 最小实现 — 概念验证
 
-```bash
-curl -X POST "http://127.0.0.1:8123/?query=SELECT%20*%20FROM%20users"
-```
-
-#### Elasticsearch
-
-```bash
-curl -X PUT "http://127.0.0.1:9200/my-index" \
-  -H 'Content-Type: application/json' \
-  -d '{"title": "Hello HarnessDB"}'
-```
-
-#### MaxCompute (Python)
-
-```python
-from odps import ODPS
-
-o = ODPS('harness', 'harness-secret', 'default',
-         endpoint='http://127.0.0.1:9031/api')
-
-o.execute_sql("""
-CREATE TABLE user_events (
-    user_id BIGINT,
-    action STRING,
-    amount DOUBLE
-) PARTITIONED BY (ds STRING) LIFECYCLE 365
-""").wait_for_success()
-```
+| 协议 | 端口 | 已实现 | 状态 |
+|------|------|--------|------|
+| **Lindorm** | 30030 | 7 个文本命令 (CREATE TABLE, PUT, GET, DELETE, SCAN, LIST, COUNT) | 文本式 HBase 接口，无线协议 |
+| **Vector DB** | 19530 | 5 个 HTTP 端点 (创建集合, 插入, 搜索, 列表, 计数) | 最小 REST API，无删除/更新/过滤 |
+| **Sybase** | 5000 | 委托给 TDS 协议 | 薄封装，无 Sybase 特有逻辑 |
 
 ## 🔧 配置
 
@@ -228,26 +190,16 @@ port = 6379
 enabled = true
 port = 27017
 
-[servers.clickhouse]
-enabled = true
-port = 8123
-
-[servers.elasticsearch]
-enabled = true
-port = 9200
-
-# ... 配置所有14种协议
+# 禁用不需要的协议
+[servers.cassandra]
+enabled = false
+port = 9042
 ```
 
-或使用命令行参数：
+或通过命令行参数：
 
 ```bash
-./harness-db \
-  --mysql-port 9030 \
-  --redis-port 6379 \
-  --mongodb-port 27017 \
-  --clickhouse-port 8123 \
-  --elasticsearch-port 9200
+./harness-db --mysql-port 9030 --redis-port 6379 --mongodb-port 27017
 ```
 
 ## 🏗️ 架构
@@ -287,13 +239,17 @@ port = 9200
         └────────────────┘
 ```
 
+所有 SQL 类协议（MySQL、PostgreSQL、ClickHouse、MaxCompute 等）共享同一个 DataFusion 查询引擎和 Parquet 存储。NoSQL 协议（Redis、MongoDB）使用针对其访问模式优化的内存存储。
+
 ## 📈 性能
 
-- **二进制大小**: ~50MB
-- **内存**: ~100MB 基线
-- **启动时间**: <1秒
-- **查询延迟**: 10-50ms（取决于协议）
-- **吞吐量**: 1000+ QPS（单实例）
+| 指标 | 数值 |
+|------|------|
+| 二进制大小 | ~50MB |
+| 内存（空闲） | ~100MB |
+| 启动时间 | <1 秒 |
+| MySQL 查询延迟 | 10-50ms |
+| Redis 操作 | 内存级，亚毫秒 |
 
 ## 🧪 测试
 
@@ -301,159 +257,89 @@ port = 9200
 # 运行所有测试
 cargo test --workspace
 
-# 结果：180 通过，5 失败（97% 通过率）
+# 运行集成测试
+cargo test -p integration-tests
 ```
 
 ## 🎓 使用场景
 
 ### 1. 本地开发
 
-用一个二进制文件替代 MySQL、Redis、MongoDB 安装：
+用一个二进制文件替代 `docker-compose.yml` 里的 14 个数据库容器：
 
 ```bash
-# 启动 HarnessDB
-./harness-db
+# 不再需要：
+# docker-compose up mysql redis mongo elasticsearch clickhouse
 
-# 你的应用现在可以连接到：
-# - MySQL :9030
-# - Redis :6379
-# - MongoDB :27017
-# 全部来自一个进程！
+# 只需运行：
+./harness-db
 ```
 
-### 2. CI/CD 测试
+你的应用连接相同的端口、相同的协议。不需要 Docker Desktop 吃 8GB 内存。
 
-在你的 CI 管道中启动完整的数据库栈：
+### 2. CI/CD 流水线
+
+GitHub Actions 里一步搞定，零容器配置：
 
 ```yaml
-# .github/workflows/test.yml
 - name: 启动 HarnessDB
-  run: ./harness-db &
+  run: ./target/release/harness-db &
 
 - name: 运行测试
   run: cargo test
+  # 测试可以使用 MySQL、Redis、MongoDB、ES、ClickHouse...
 ```
 
-### 3. 阿里云开发
+### 3. 阿里云本地开发
 
-本地测试 MaxCompute/Hologres 查询：
+本地测试 MaxCompute (ODPS)、Hologres、TableStore 查询，无需云成本：
 
 ```python
-# 无需云成本即可测试你的 ODPS SQL
 from odps import ODPS
 o = ODPS('harness', 'harness-secret', 'default',
          endpoint='http://localhost:9031/api')
 o.execute_sql('SELECT * FROM my_table').wait_for_success()
 ```
 
-### 4. 多数据库测试
+### 4. 数据库协议测试
 
-测试你的应用在多个数据库上的表现：
+验证你的应用的数据库驱动兼容性：
 
-```python
-# 测试 MySQL
-mysql_client.connect('localhost:9030')
+```bash
+# 测试 MySQL 协议
+./harness-db --only-mysql &
+cargo test --features mysql-tests
 
-# 测试 PostgreSQL
-pg_client.connect('localhost:15432')
-
-# 测试 Redis
-redis_client.connect('localhost:6379')
-
-# 全部来自同一个二进制文件！
+# 测试 PostgreSQL 协议
+./harness-db --only-postgres &
+cargo test --features pg-tests
 ```
-
-## 📚 SQL 兼容性
-
-### 支持的 SQL 特性
-
-- **DDL**: CREATE/DROP DATABASE, CREATE/DROP TABLE, ALTER TABLE
-- **DML**: INSERT, UPDATE, DELETE, SELECT
-- **查询**: JOIN, WHERE, GROUP BY, ORDER BY, HAVING, LIMIT
-- **聚合**: COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT
-- **函数**: 100+ 内置函数（日期、字符串、数学等）
-- **窗口函数**: ROW_NUMBER, RANK, LAG, LEAD 等
-
-### 数据类型
-
-Boolean, Int8-64, Float32/64, Decimal, Date, DateTime, Timestamp, String, Binary, Array, Map, Struct, JSON
-
-## 🤝 贡献
-
-我们欢迎贡献！以下是你可以帮助的方式：
-
-1. **⭐ Star 仓库** - 帮助更多人发现
-2. **🐛 报告 bug** - 提交 issue
-3. **💡 建议功能** - 分享你的使用场景
-4. **🔧 提交 PR** - 修复 bug 或添加功能
-5. **📝 改进文档** - 帮助他人学习
-
-请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解指南。
-
-## 📊 项目统计
-
-- **语言**: Rust (~80,000 行)
-- **Crate 数量**: 28
-- **协议数量**: 14
-- **测试数量**: 180 通过
-- **支持的客户端**: 100+（MySQL, PostgreSQL, Redis, MongoDB 等）
-- **许可证**: Apache 2.0
-
-## 🗺️ 路线图
-
-### v1.0.0（当前）
-- ✅ 14种协议实现
-- ✅ 核心 SQL 引擎
-- ✅ 配置系统
-- ✅ 97% 测试通过率
-
-### v1.1.0
-- [ ] 分布式事务（2PC）
-- [ ] 复制和高可用
-- [ ] 高级查询优化
-- [ ] 物化视图
-
-### v2.0.0
-- [ ] 集群模式（多节点）
-- [ ] 云原生部署（Kubernetes）
-- [ ] 高级安全（加密、RBAC）
-- [ ] 实时流处理
 
 ## 📖 文档
 
-- [SQL 参考](docs/en/sql-reference.md)
-- [配置指南](docs/en/configuration.md)
-- [架构](docs/en/architecture.md)
-- [协议兼容性](docs/alibaba-cloud-compatibility.md)
-- [路线图](docs/roadmap/README.md)
+- [SQL 参考](../en/sql-reference.md)
+- [配置指南](../en/configuration.md)
+- [架构](../en/architecture.md)
+- [阿里云兼容性](../alibaba-cloud-compatibility.md)
+- [路线图](../roadmap/README.md)
+
+## 🤝 贡献
+
+欢迎贡献！请参阅 [CONTRIBUTING.md](../../CONTRIBUTING.md)。
+
+适合新手的 Issue：
+- 实现 Cassandra INSERT/UPDATE/DELETE（目前是空操作）
+- 添加 InfluxDB 时间范围过滤
+- 改进 Oracle DML 支持
+- 为任何协议添加更多集成测试
 
 ## 📜 许可证
 
-Apache License 2.0. 详见 [LICENSE](LICENSE).
+Apache License 2.0。详见 [LICENSE](../../LICENSE)。
 
 ## 🙏 致谢
 
-- **[Apache DataFusion](https://github.com/apache/arrow-datafusion)** - 查询引擎
-- **[Apache Arrow](https://arrow.apache.org)** - 列式格式
-- **[Apache Parquet](https://parquet.apache.org)** - 存储格式
-- **[Apache Doris](https://doris.apache.org)** - SQL 方言灵感
-- **[sqlparser-rs](https://github.com/sqlparser-rs/sqlparser-rs)** - SQL 解析
-
-## 🌟 支持我们
-
-如果你觉得 HarnessDB 有用，请考虑：
-
-- ⭐ **Star 仓库** - 帮助他人发现
-- 🐦 **发推** - 传播消息
-- 📝 **写博客** - 分享你的经验
-- 🎥 **制作视频** - 展示你如何使用它
-
----
-
-<div align="center">
-
-**由 HarnessDB 团队用 ❤️ 构建**
-
-[网站](https://harnessdb.io) · [博客](https://blog.harnessdb.io) · [Twitter](https://twitter.com/harnessdb) · [Discord](https://discord.gg/harnessdb)
-
-</div>
+- **[Apache DataFusion](https://github.com/apache/arrow-datafusion)** — 查询引擎
+- **[Apache Arrow](https://arrow.apache.org)** — 列式格式
+- **[Apache Parquet](https://parquet.apache.org)** — 存储格式
+- **[sqlparser-rs](https://github.com/sqlparser-rs/sqlparser-rs)** — SQL 解析

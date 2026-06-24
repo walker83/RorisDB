@@ -2,129 +2,72 @@
 
 # 🦎 HarnessDB
 
-### The Universal Database Chameleon - 14 Protocols, 1 Binary
+### LocalStack for Databases — 14 Protocols, 1 Binary
 
 **One binary. Fourteen protocols. Zero infrastructure.**
 
-**🎯 Alibaba Cloud Full-Stack Compatible**
-**🚀 14 Database Protocols in One Binary**
-**⚡ 97% Test Pass Rate (180/185)**
-
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-2024--edition-orange.svg)](https://www.rust-lang.org)
-[![Version](https://img.shields.io/badge/Version-1.0.0-green.svg)]()
-[![Protocols](https://img.shields.io/badge/Protocols-14-blue.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-180%20passed-brightgreen.svg)]()
-[![Stars](https://img.shields.io/github/stars/walker83/HarnessDB.svg?style=social&label=Star)](https://github.com/walker83/HarnessDB)
+[![Protocols](https://img.shields.io/badge/Protocols-14-blue.svg)](#-compatibility-matrix)
 
-[English](README.md) · [中文文档](docs/zh/README.md) · [Quick Start](#-quick-start) · [Protocols](#-supported-protocols) · [Architecture](#-architecture)
+[English](README.md) · [中文文档](docs/zh/README.md) · [Quick Start](#-quick-start) · [Compatibility](#-compatibility-matrix) · [Architecture](#-architecture)
 
 ---
 
-**🔥 What if you could replace MySQL, Redis, MongoDB, ClickHouse, Elasticsearch, Oracle, Cassandra, PostgreSQL, and more with a single binary?**
+**Stop spinning up 14 different containers just to run integration tests.**
 
 </div>
 
 ---
 
-## 🎯 What is HarnessDB?
+## What is HarnessDB?
 
-HarnessDB is a **universal database simulation platform** that speaks **14 different database protocols** simultaneously. Built in Rust with Apache DataFusion, it's the world's first database that can replace:
+HarnessDB is a **local development and CI testing platform** that speaks **14 different database protocols** from a single Rust binary. Think of it as [LocalStack](https://localstack.cloud/) but for databases — instead of simulating AWS services, it simulates MySQL, Redis, MongoDB, PostgreSQL, ClickHouse, Elasticsearch, and more.
 
-- **Relational Databases**: MySQL, PostgreSQL, Oracle
-- **NoSQL Databases**: Redis, MongoDB, Cassandra
-- **OLAP Databases**: ClickHouse, Elasticsearch, AnalyticDB
-- **Cloud Databases**: MaxCompute (ODPS), Hologres, TableStore, Lindorm
-- **Specialized**: InfluxDB (Time Series), Vector Database (AI/ML)
+**Use it for:**
+- Local development without installing 14 database servers
+- CI/CD pipelines that need a database stack in seconds
+- Integration testing across multiple database protocols
+- Alibaba Cloud local development (MaxCompute, Hologres, TableStore)
 
-**All with a single ~50MB binary. No containers. No clusters. No cloud bills.**
+**Don't use it for:**
+- Production workloads — it's a simulation layer, not a replacement for real databases
+- High-concurrency, low-latency Redis scenarios
+- MongoDB aggregation pipelines in production
+- ACID transaction guarantees
 
-### 🎪 The Database Chameleon
+> HarnessDB stores everything in Parquet files via Apache DataFusion. It's fast enough for dev/test, but it's not a drop-in production replacement for specialized databases.
 
-Like a chameleon adapts to its environment, HarnessDB adapts to **any database protocol**:
+## Quick Demo
 
 ```bash
-# Start HarnessDB
-./harness-db
+# Start HarnessDB — all 14 protocols listen on their default ports
+./target/release/harness-db
 
-# Connect with ANY client
-mysql -h 127.0.0.1 -P 9030          # MySQL client
-psql -h 127.0.0.1 -P 15432          # PostgreSQL client
-redis-cli -h 127.0.0.1 -p 6379      # Redis client
-mongo --host 127.0.0.1 --port 27017 # MongoDB client
-curl http://127.0.0.1:9200          # Elasticsearch API
-clickhouse-client --port 9000       # ClickHouse client
-# ... and 8 more protocols!
+# Terminal 1: MySQL
+mysql -h 127.0.0.1 -P 9030 -uroot -e "CREATE TABLE users (id INT, name VARCHAR(50)); INSERT INTO users VALUES (1, 'Alice'); SELECT * FROM users;"
+
+# Terminal 2: Redis
+redis-cli -h 127.0.0.1 -p 6379 SET mykey "hello" && redis-cli -h 127.0.0.1 -p 6379 GET mykey
+
+# Terminal 3: MongoDB
+mongosh --host 127.0.0.1 --port 27017 --eval "db.users.insertOne({name: 'Bob', age: 30}); db.users.find()"
+
+# Terminal 4: Elasticsearch
+curl -s -X PUT "http://127.0.0.1:9200/my-index/_doc/1" -H 'Content-Type: application/json' -d '{"title": "Hello"}'
+curl -s "http://127.0.0.1:9200/my-index/_search" -H 'Content-Type: application/json' -d '{"query": {"match_all": {}}}'
+
+# Terminal 5: ClickHouse
+curl -s "http://127.0.0.1:8123/" -d "CREATE TABLE test (id Int32, name String) ENGINE=Memory"
+curl -s "http://127.0.0.1:8123/" -d "INSERT INTO test VALUES (1, 'Charlie')"
+curl -s "http://127.0.0.1:8123/" -d "SELECT * FROM test"
 ```
 
-## 🚀 Why HarnessDB?
+> 📹 **TODO**: Replace this with an asciinema recording or GIF showing all protocols in action.
 
-### For Developers
+## 🚀 Quick Start
 
-- **Local Development**: Test against MySQL, Redis, MongoDB without installing them
-- **CI/CD**: Spin up a full database stack in seconds for testing
-- **Learning**: Experiment with 14 different database systems instantly
-- **Prototyping**: Switch databases without changing your application code
-
-### For Companies
-
-- **Cost Reduction**: Replace 14 different database systems with one
-- **Simplified Ops**: One binary to deploy, monitor, and maintain
-- **Multi-Cloud**: Compatible with Alibaba Cloud, AWS, Azure, GCP services
-- **Migration Path**: Test migrations between database systems easily
-
-### For Alibaba Cloud Users
-
-- **MaxCompute Compatible**: Test ODPS SQL locally without cloud costs
-- **Hologres Compatible**: Develop real-time analytics locally
-- **TableStore Compatible**: Simulate OTS for development
-- **Lindorm Compatible**: Test HBase-like workloads locally
-
-## 📊 Supported Protocols (14 Total)
-
-### 🔥 Relational Databases
-
-| Protocol | Port | Compatible With | Client |
-|----------|------|----------------|--------|
-| **MySQL** | 9030 | MySQL 5.7/8.0, RDS, Doris, StarRocks | `mysql` |
-| **PostgreSQL** | 15432 | PostgreSQL 14, Hologres | `psql` |
-| **Oracle** | 1521 | Oracle 11g+, PolarDB-O | SQL*Plus, JDBC |
-
-### 🎯 NoSQL Databases
-
-| Protocol | Port | Compatible With | Client |
-|----------|------|----------------|--------|
-| **Redis** | 6379 | Redis 6+, Tair | `redis-cli`, all Redis drivers |
-| **MongoDB** | 27017 | MongoDB 4.4+, ApsaraDB | `mongo`, all MongoDB drivers |
-| **Cassandra** | 9042 | Cassandra 3.x+, ScyllaDB | `cqlsh`, all Cassandra drivers |
-
-### 📈 OLAP & Analytics
-
-| Protocol | Port | Compatible With | Client |
-|----------|------|----------------|--------|
-| **ClickHouse** | 8123 | ClickHouse 20+ | `clickhouse-client`, HTTP |
-| **Elasticsearch** | 9200 | Elasticsearch 7.x, OpenSearch | `curl`, all ES clients |
-| **AnalyticDB MySQL** | 3307 | AnalyticDB MySQL | `mysql` |
-
-### ☁️ Alibaba Cloud Services
-
-| Protocol | Port | Compatible With | Client |
-|----------|------|----------------|--------|
-| **MaxCompute** | 9031 | MaxCompute (ODPS) | `pyodps`, REST API |
-| **Hologres** | 15432 | Hologres | `psql` |
-| **TableStore** | 8087 | TableStore (OTS) | REST API, SDK |
-| **Lindorm** | 30030 | Lindorm, HBase | HBase shell |
-
-### 🎨 Specialized
-
-| Protocol | Port | Compatible With | Client |
-|----------|------|----------------|--------|
-| **InfluxDB** | 8086 | InfluxDB 1.x, TSDB | `influx`, line protocol |
-| **Vector DB** | 19530 | Milvus, Pinecone | REST API, gRPC |
-
-## ⚡ Quick Start
-
-### 1. Build (or download binary)
+### Build
 
 ```bash
 git clone https://github.com/walker83/HarnessDB.git
@@ -132,84 +75,106 @@ cd HarnessDB
 cargo build --release
 ```
 
-### 2. Start
+### Run
 
 ```bash
 ./target/release/harness-db
 ```
 
-That's it! All 14 protocols are now listening on their default ports.
+All 14 protocols start listening immediately. No config files needed.
 
-### 3. Connect with Any Client
+### Use in CI/CD
 
-#### MySQL
+```yaml
+# .github/workflows/test.yml
+name: Integration Tests
+on: [push]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-```bash
-mysql -h 127.0.0.1 -P 9030 -uroot
+      - name: Build HarnessDB
+        run: cargo build --release
+
+      - name: Start database stack
+        run: ./target/release/harness-db &
+        # MySQL on :9030, Redis on :6379, MongoDB on :27017, etc.
+
+      - name: Wait for HarnessDB
+        run: |
+          for i in $(seq 1 30); do
+            mysql -h 127.0.0.1 -P 9030 -uroot -e "SELECT 1" 2>/dev/null && break
+            sleep 1
+          done
+
+      - name: Run your tests
+        run: |
+          # Your app can now connect to MySQL, Redis, MongoDB, etc.
+          # No need for services: containers in your workflow!
+          npm test
 ```
 
-```sql
-CREATE DATABASE demo;
-USE demo;
-CREATE TABLE users (id INT, name VARCHAR(50), age INT);
-INSERT INTO users VALUES (1, 'Alice', 30);
-SELECT * FROM users;
+This replaces the typical CI setup that requires multiple `services:` containers:
+
+```yaml
+# ❌ Before: heavy, slow, complex
+services:
+  mysql:
+    image: mysql:8.0
+    ports: ['3306:3306']
+    env:
+      MYSQL_ROOT_PASSWORD: test
+  redis:
+    image: redis:7
+    ports: ['6379:6379']
+  mongo:
+    image: mongo:6
+    ports: ['27017:27017']
+  elasticsearch:
+    image: elasticsearch:7.17
+    ports: ['9200:9200']
+
+# ✅ After: one binary, starts in <1s
+steps:
+  - run: ./harness-db &
 ```
 
-#### Redis
+## 📊 Compatibility Matrix
 
-```bash
-redis-cli -h 127.0.0.1 -p 6379
-```
+This is the honest truth about what each protocol supports. We believe transparency earns more trust than inflated claims.
 
-```redis
-SET mykey "Hello HarnessDB"
-GET mykey
-HSET user:1 name "Bob" age 25
-HGETALL user:1
-```
+### ✅ Full Implementation — Ready for Local Dev & Testing
 
-#### MongoDB
+| Protocol | Port | Commands | Storage | Notes |
+|----------|------|----------|---------|-------|
+| **MySQL** | 9030 | CREATE/DROP TABLE/DB, INSERT, UPDATE, DELETE, SELECT (JOIN, WHERE, GROUP BY, ORDER BY, LIMIT, aggregates, window functions) | Parquet via DataFusion | MySQL 5.7/8.0 compatible wire protocol |
+| **PostgreSQL** | 15432 | Full wire protocol v3, auth (md5/scram-sha-256), extended query, 20+ pg_catalog tables, information_schema | Parquet via DataFusion | Hologres-compatible, works with psql/JDBC/psycopg2 |
+| **Redis** | 6379 | 50+ commands: String (GET/SET/MGET/INCR...), Hash (HGET/HSET/HGETALL...), List (LPUSH/RPOP/LRANGE...), Set (SADD/SMEMBERS...), Sorted Set (ZADD/ZRANGE...) | In-memory (DashMap) | RESP2/RESP3, 16 databases, TTL support |
+| **MongoDB** | 27017 | insert, find, update, delete, count, aggregate ($match/$group/$sum/$count/$skip/$limit), ismaster/hello | In-memory (DashMap) | OP_MSG + legacy OP_QUERY wire protocol |
+| **ClickHouse** | 8123 | SELECT (WHERE, GROUP BY, ORDER BY, LIMIT, LIKE), INSERT, CREATE/DROP TABLE/DB, ALTER TABLE UPDATE/DELETE, SHOW/DESCRIBE | Parquet via DataFusion | HTTP interface, TSV output |
+| **Elasticsearch** | 9200 | Document CRUD, bulk API, search (match_all), index create/delete/info, _cat APIs, _cluster/health | Parquet via DataFusion | REST API, proper ES-style JSON responses |
+| **MaxCompute** | 9031 | Full REST API, SQL instances (submit/status/result), tunnel upload/download, Aliyun auth (v1/v3/STS) | Parquet via DataFusion | pyodps SDK compatible, SQL translator included |
+| **AnalyticDB MySQL** | 3307 | Full SQL (same as MySQL protocol) | Parquet via DataFusion | Uses mysql-protocol under the hood |
 
-```bash
-mongo --host 127.0.0.1 --port 27017
-```
+### ⚠️ Partial Implementation — Basic Operations Work, Advanced Features Missing
 
-```javascript
-db.users.insert({name: "Charlie", age: 35})
-db.users.find()
-```
+| Protocol | Port | Works | Missing | Notes |
+|----------|------|-------|---------|-------|
+| **Cassandra** | 9042 | Frame codec v4, startup handshake, SELECT from system tables, CREATE/DROP keyspace/table | INSERT/UPDATE/DELETE are no-ops (return success without persisting) | Good for testing CQL connection logic, not data operations |
+| **InfluxDB** | 8086 | Line protocol write, SHOW DATABASES/MEASUREMENTS, CREATE/DROP DATABASE, basic SELECT | WHERE time filtering, InfluxQL, Flux | Write path works, query path is basic |
+| **TableStore** | 8087 | Table CRUD, row put/get/update/delete, range queries | Batch operations, conditional updates, atomic counters, TTL | REST API with JSON |
+| **Oracle** | 1521 | TNS connect/handshake, SELECT USER/SYSDATE/v$version, basic scalar expressions | DML, table access, PL/SQL, storage | Good for testing Oracle driver connectivity |
+| **TDS (SAP ASE)** | 5000 | TDS 5.0 login, SQL text queries, basic result encoding | Prepared statements, cursors, transaction control, proper type mapping | Wire protocol framing works |
 
-#### ClickHouse
+### 🔧 Minimal — Proof of Concept
 
-```bash
-curl -X POST "http://127.0.0.1:8123/?query=SELECT%20*%20FROM%20users"
-```
-
-#### Elasticsearch
-
-```bash
-curl -X PUT "http://127.0.0.1:9200/my-index" \
-  -H 'Content-Type: application/json' \
-  -d '{"title": "Hello HarnessDB"}'
-```
-
-#### MaxCompute (Python)
-
-```python
-from odps import ODPS
-
-o = ODPS('harness', 'harness-secret', 'default',
-         endpoint='http://127.0.0.1:9031/api')
-
-o.execute_sql("""
-CREATE TABLE user_events (
-    user_id BIGINT,
-    action STRING,
-    amount DOUBLE
-) PARTITIONED BY (ds STRING) LIFECYCLE 365
-""").wait_for_success()
-```
+| Protocol | Port | What Works | Status |
+|----------|------|------------|--------|
+| **Lindorm** | 30030 | 7 text commands (CREATE TABLE, PUT, GET, DELETE, SCAN, LIST, COUNT) | Text-based HBase-like interface, no wire protocol |
+| **Vector DB** | 19530 | 5 HTTP endpoints (create collection, insert, search, list, count) | Minimal REST API, no delete/update/filtering |
+| **Sybase** | 5000 | Delegates to TDS protocol | Thin wrapper, no Sybase-specific logic |
 
 ## 🔧 Configuration
 
@@ -228,26 +193,16 @@ port = 6379
 enabled = true
 port = 27017
 
-[servers.clickhouse]
-enabled = true
-port = 8123
-
-[servers.elasticsearch]
-enabled = true
-port = 9200
-
-# ... configure all 14 protocols
+# Disable protocols you don't need
+[servers.cassandra]
+enabled = false
+port = 9042
 ```
 
-Or use command-line flags:
+Or via command-line flags:
 
 ```bash
-./harness-db \
-  --mysql-port 9030 \
-  --redis-port 6379 \
-  --mongodb-port 27017 \
-  --clickhouse-port 8123 \
-  --elasticsearch-port 9200
+./harness-db --mysql-port 9030 --redis-port 6379 --mongodb-port 27017
 ```
 
 ## 🏗️ Architecture
@@ -287,13 +242,17 @@ Or use command-line flags:
         └────────────────┘
 ```
 
+All SQL-speaking protocols (MySQL, PostgreSQL, ClickHouse, MaxCompute, etc.) share the same DataFusion query engine and Parquet storage. NoSQL protocols (Redis, MongoDB) use in-memory storage optimized for their access patterns.
+
 ## 📈 Performance
 
-- **Binary Size**: ~50MB
-- **Memory**: ~100MB baseline
-- **Startup**: <1 second
-- **Query Latency**: 10-50ms (depends on protocol)
-- **Throughput**: 1000+ QPS (single instance)
+| Metric | Value |
+|--------|-------|
+| Binary size | ~50MB |
+| Memory (idle) | ~100MB |
+| Startup time | <1 second |
+| MySQL query latency | 10-50ms |
+| Redis operations | In-memory, sub-ms |
 
 ## 🧪 Testing
 
@@ -301,131 +260,81 @@ Or use command-line flags:
 # Run all tests
 cargo test --workspace
 
-# Results: 180 passed, 5 failed (97% pass rate)
+# Run integration tests
+cargo test -p integration-tests
 ```
 
 ## 🎓 Use Cases
 
 ### 1. Local Development
 
-Replace MySQL, Redis, MongoDB installations with one binary:
+Replace `docker-compose.yml` with 14 database containers:
 
 ```bash
-# Start HarnessDB
-./harness-db
+# Instead of:
+# docker-compose up mysql redis mongo elasticsearch clickhouse
 
-# Your app can now connect to:
-# - MySQL on :9030
-# - Redis on :6379
-# - MongoDB on :27017
-# All from one process!
+# Just run:
+./harness-db
 ```
 
-### 2. CI/CD Testing
+Your app connects to the same ports, same protocols. No Docker Desktop eating 8GB RAM.
 
-Spin up a full database stack in your CI pipeline:
+### 2. CI/CD Pipeline
+
+One step in your GitHub Actions, zero container setup:
 
 ```yaml
-# .github/workflows/test.yml
 - name: Start HarnessDB
-  run: ./harness-db &
+  run: ./target/release/harness-db &
 
-- name: Run Tests
+- name: Run tests
   run: cargo test
+  # Tests can use MySQL, Redis, MongoDB, ES, ClickHouse...
 ```
 
-### 3. Alibaba Cloud Development
+### 3. Alibaba Cloud Local Development
 
-Test MaxCompute/Hologres queries locally:
+Test MaxCompute (ODPS), Hologres, and TableStore queries locally without cloud costs:
 
 ```python
-# Test your ODPS SQL without cloud costs
 from odps import ODPS
 o = ODPS('harness', 'harness-secret', 'default',
          endpoint='http://localhost:9031/api')
 o.execute_sql('SELECT * FROM my_table').wait_for_success()
 ```
 
-### 4. Multi-Database Testing
+### 4. Database Protocol Testing
 
-Test your application against multiple databases:
+Verify your application's database driver compatibility:
 
-```python
-# Test against MySQL
-mysql_client.connect('localhost:9030')
+```bash
+# Test your app against MySQL protocol
+./harness-db --only-mysql &
+cargo test --features mysql-tests
 
-# Test against PostgreSQL
-pg_client.connect('localhost:15432')
-
-# Test against Redis
-redis_client.connect('localhost:6379')
-
-# All from the same binary!
+# Test against PostgreSQL protocol
+./harness-db --only-postgres &
+cargo test --features pg-tests
 ```
-
-## 📚 SQL Compatibility
-
-### Supported SQL Features
-
-- **DDL**: CREATE/DROP DATABASE, CREATE/DROP TABLE, ALTER TABLE
-- **DML**: INSERT, UPDATE, DELETE, SELECT
-- **Queries**: JOIN, WHERE, GROUP BY, ORDER BY, HAVING, LIMIT
-- **Aggregates**: COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT
-- **Functions**: 100+ built-in functions (date, string, math, etc.)
-- **Window Functions**: ROW_NUMBER, RANK, LAG, LEAD, etc.
-
-### Data Types
-
-Boolean, Int8-64, Float32/64, Decimal, Date, DateTime, Timestamp, String, Binary, Array, Map, Struct, JSON
-
-## 🤝 Contributing
-
-We welcome contributions! Here's how you can help:
-
-1. **⭐ Star the repo** - helps discovery
-2. **🐛 Report bugs** - open an issue
-3. **💡 Suggest features** - share your use case
-4. **🔧 Submit PRs** - fix bugs or add features
-5. **📝 Improve docs** - help others learn
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## 📊 Project Stats
-
-- **Language**: Rust (~80,000 lines)
-- **Crates**: 28
-- **Protocols**: 14
-- **Tests**: 180 passed
-- **Supported Clients**: 100+ (MySQL, PostgreSQL, Redis, MongoDB, etc.)
-- **License**: Apache 2.0
-
-## 🗺️ Roadmap
-
-### v1.0.0 (Current)
-- ✅ 14 protocol implementations
-- ✅ Core SQL engine
-- ✅ Configuration system
-- ✅ 97% test pass rate
-
-### v1.1.0
-- [ ] Distributed transactions (2PC)
-- [ ] Replication and high availability
-- [ ] Advanced query optimization
-- [ ] Materialized views
-
-### v2.0.0
-- [ ] Cluster mode (multi-node)
-- [ ] Cloud-native deployment (Kubernetes)
-- [ ] Advanced security (encryption, RBAC)
-- [ ] Real-time streaming
 
 ## 📖 Documentation
 
 - [SQL Reference](docs/en/sql-reference.md)
 - [Configuration Guide](docs/en/configuration.md)
 - [Architecture](docs/en/architecture.md)
-- [Protocol Compatibility](docs/alibaba-cloud-compatibility.md)
+- [Alibaba Cloud Compatibility](docs/alibaba-cloud-compatibility.md)
 - [Roadmap](docs/roadmap/README.md)
+
+## 🤝 Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+Good first issues:
+- Implement missing Cassandra DML operations
+- Add InfluxDB time-range filtering
+- Improve Oracle DML support
+- Add more protocol integration tests
 
 ## 📜 License
 
@@ -433,27 +342,7 @@ Apache License 2.0. See [LICENSE](LICENSE).
 
 ## 🙏 Acknowledgments
 
-- **[Apache DataFusion](https://github.com/apache/arrow-datafusion)** - Query engine
-- **[Apache Arrow](https://arrow.apache.org)** - Columnar format
-- **[Apache Parquet](https://parquet.apache.org)** - Storage format
-- **[Apache Doris](https://doris.apache.org)** - SQL dialect inspiration
-- **[sqlparser-rs](https://github.com/sqlparser-rs/sqlparser-rs)** - SQL parsing
-
-## 🌟 Show Your Support
-
-If you find HarnessDB useful, please consider:
-
-- ⭐ **Starring the repo** - helps others discover it
-- 🐦 **Tweeting about it** - spread the word
-- 📝 **Writing a blog post** - share your experience
-- 🎥 **Creating a video** - show how you use it
-
----
-
-<div align="center">
-
-**Built with ❤️ by the HarnessDB Team**
-
-[Website](https://harnessdb.io) · [Blog](https://blog.harnessdb.io) · [Twitter](https://twitter.com/harnessdb) · [Discord](https://discord.gg/harnessdb)
-
-</div>
+- **[Apache DataFusion](https://github.com/apache/arrow-datafusion)** — Query engine
+- **[Apache Arrow](https://arrow.apache.org)** — Columnar format
+- **[Apache Parquet](https://parquet.apache.org)** — Storage format
+- **[sqlparser-rs](https://github.com/sqlparser-rs/sqlparser-rs)** — SQL parsing

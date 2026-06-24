@@ -1,22 +1,22 @@
 #!/bin/bash
-# RorisDB Quick Demo Script
-# This script demonstrates the key features of RorisDB
+# HarnessDB Quick Demo Script
+# Demonstrates MySQL, Redis, MongoDB, ClickHouse, Elasticsearch protocols
 
 set -e
 
-echo "=== RorisDB Quick Demo ==="
+echo "=== HarnessDB Quick Demo ==="
 echo ""
 
 # Check if binary exists
 if [ ! -f "./target/release/harness-db" ]; then
-    echo "Building RorisDB..."
+    echo "Building HarnessDB..."
     cargo build --release
 fi
 
 # Start server in background
-echo "Starting RorisDB server..."
-rm -rf /tmp/roris-demo-data /tmp/roris-demo-meta
-./target/release/harness-db --mysql-port 9031 --data-dir /tmp/roris-demo-data --meta-dir /tmp/roris-demo-meta > /tmp/roris-demo.log 2>&1 &
+echo "Starting HarnessDB server..."
+rm -rf /tmp/harness-demo-data /tmp/harness-demo-meta
+./target/release/harness-db --mysql-port 9031 --data-dir /tmp/harness-demo-data --meta-dir /tmp/harness-demo-meta > /tmp/harness-demo.log 2>&1 &
 SERVER_PID=$!
 sleep 2
 
@@ -25,7 +25,7 @@ cleanup() {
     echo ""
     echo "Stopping server..."
     kill $SERVER_PID 2>/dev/null || true
-    rm -rf /tmp/roris-demo-data /tmp/roris-demo-meta
+    rm -rf /tmp/harness-demo-data /tmp/harness-demo-meta
 }
 trap cleanup EXIT
 
@@ -103,4 +103,4 @@ EOF
 
 echo ""
 echo "=== Demo Complete ==="
-echo "Server log: /tmp/roris-demo.log"
+echo "Server log: /tmp/harness-demo.log"

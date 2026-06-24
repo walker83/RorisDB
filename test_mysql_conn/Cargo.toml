@@ -1,9 +1,0 @@
-[package]
-name = "test_mysql_conn"
-version = "0.1.0"
-edition = "2021"
-
-[workspace]
-
-[dependencies]
-mysql = "25"

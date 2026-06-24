@@ -4,3 +4,20 @@ log/
 *.swp
 *.swo
 .DS_Store
+
+# Internal strategy/marketing files (not for public repo)
+GITHUB_STRATEGY.md
+star-acquisition-checklist.sh
+FINAL_IMPLEMENTATION_SUMMARY.md
+IMPLEMENTATION_COMPLETE.md
+PERFORMANCE_REPORT.md
+RELEASE_NOTES_v1.0.0.md
+DORIS_COMPATIBILITY.md
+.workbuddy/
+.claude/
+test_alter.rs
+test_sqlparser.rs
+docs/community-posts.md
+docs/superpowers/
+docs/testreport/
+test_mysql_conn/
