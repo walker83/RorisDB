@@ -100,10 +100,14 @@ impl RespParser {
     }
 
     fn parse_integer(buf: &mut BytesMut) -> Result<Option<RespValue>, RespError> {
-        Self::parse_line(buf).map(|opt| {
-            opt.and_then(|line| {
-                line.parse::<i64>().ok().map(RespValue::Integer)
-            })
+        Self::parse_line(buf).and_then(|opt| {
+            match opt {
+                Some(line) => match line.parse::<i64>() {
+                    Ok(n) => Ok(Some(RespValue::Integer(n))),
+                    Err(_) => Err(RespError::InvalidInteger(line)),
+                },
+                None => Ok(None),
+            }
         })
     }
 
