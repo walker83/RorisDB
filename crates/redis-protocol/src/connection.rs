@@ -12,7 +12,6 @@ use tracing::{debug, error, info};
 pub struct RedisConnection {
     stream: TcpStream,
     read_buf: BytesMut,
-    write_buf: BytesMut,
     handler: Arc<dyn RedisCommandHandler>,
     db_index: usize,
     conn_id: u32,
@@ -27,7 +26,6 @@ impl RedisConnection {
         Self {
             stream,
             read_buf: BytesMut::with_capacity(4096),
-            write_buf: BytesMut::with_capacity(4096),
             handler,
             db_index: 0,
             conn_id,
