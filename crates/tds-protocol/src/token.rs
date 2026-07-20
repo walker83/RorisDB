@@ -75,7 +75,7 @@ pub fn encode_login_ack() -> Vec<u8> {
     buf.extend_from_slice(&(total_len as u16).to_le_bytes());
     buf.push(interface);
     buf.extend_from_slice(&tds_version);
-    buf.push(prog.len() as u8);
+    buf.push(prog.len().min(255) as u8);
     for ch in &prog { buf.extend_from_slice(&ch.to_le_bytes()); }
     // Version: major.minor.build.patch (4 bytes total)
     buf.extend_from_slice(&16u32.to_le_bytes()); // 16.0.0.0
