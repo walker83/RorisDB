@@ -2772,7 +2772,10 @@ fn convert_expr(expr: sqlparser::ast::Expr) -> Result<Expr, ParseError> {
                 if n.contains('.') || n.contains('e') || n.contains('E') {
                     LiteralValue::Float64(n.parse().unwrap_or(0.0))
                 } else {
-                    LiteralValue::Int64(n.parse().unwrap_or(0))
+                    LiteralValue::Int64(n.parse().unwrap_or_else(|_| {
+                        // Try to parse as float and truncate, or default to 0
+                        n.parse::<f64>().map(|f| f as i64).unwrap_or(0)
+                    }))
                 }
             }
             sqlparser::ast::Value::SingleQuotedString(s) => {
