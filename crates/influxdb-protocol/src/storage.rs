@@ -15,13 +15,15 @@ pub struct TimeSeriesPoint {
 
 /// InfluxDB measurement (table)
 pub struct Measurement {
-    points: DashMap<i64, TimeSeriesPoint>, // timestamp -> point
+    points: DashMap<String, TimeSeriesPoint>, // composite key -> point
+    counter: std::sync::atomic::AtomicU64,   // for unique keys
 }
 
 impl Measurement {
     pub fn new() -> Self {
         Self {
             points: DashMap::new(),
+            counter: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -30,20 +32,24 @@ impl Measurement {
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
         });
 
+        // Use composite key to prevent timestamp collisions
+        let seq = self.counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let key = format!("{}_{:016x}", timestamp, seq);
+
         let ts_point = TimeSeriesPoint {
             timestamp,
             fields: point.fields,
             tags: point.tags,
         };
 
-        self.points.insert(timestamp, ts_point);
+        self.points.insert(key, ts_point);
     }
 
     pub fn query(&self, start: Option<i64>, end: Option<i64>) -> Vec<TimeSeriesPoint> {
         let mut results: Vec<TimeSeriesPoint> = self.points
             .iter()
             .filter(|entry| {
-                let ts = *entry.key();
+                let ts = entry.value().timestamp;
                 if let Some(s) = start {
                     if ts < s {
                         return false;
