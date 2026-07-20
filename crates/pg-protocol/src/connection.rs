@@ -814,6 +814,10 @@ impl PgConnection {
 /// DML (INSERT/UPDATE/DELETE) and DDL only get CommandComplete.
 fn is_row_returning_query(sql: &str) -> bool {
     let upper = sql.trim().to_uppercase();
+    // SELECT INTO creates a table, doesn't return rows
+    if upper.starts_with("SELECT") && upper.contains(" INTO ") {
+        return false;
+    }
     upper.starts_with("SELECT")
         || upper.starts_with("WITH")
         || upper.starts_with("VALUES")
