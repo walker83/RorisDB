@@ -385,14 +385,15 @@ impl ElasticsearchCommandHandler for DefaultElasticsearchHandler {
                 if let Some(idx) = index {
                     if let Some(body_str) = body {
                         if let Ok(doc) = serde_json::from_str::<HashMap<String, serde_json::Value>>(body_str) {
+                            let existed = idx.get_document(id).is_some();
                             let document = Document { fields: doc };
                             idx.index_document(id.to_string(), document);
                             return json!({
                                 "_index": index_name,
                                 "_type": "_doc",
                                 "_id": id,
-                                "_version": 1,
-                                "result": "created",
+                                "_version": if existed { 2 } else { 1 },
+                                "result": if existed { "updated" } else { "created" },
                                 "_shards": {
                                     "total": 2,
                                     "successful": 1,
