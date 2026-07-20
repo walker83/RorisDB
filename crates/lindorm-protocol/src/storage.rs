@@ -20,8 +20,15 @@ impl LindormStorage {
         }
     }
 
-    pub fn create_table(&self, name: &str) {
-        self.tables.insert(name.to_string(), Arc::new(LindormTable::new()));
+    pub fn create_table(&self, name: &str) -> bool {
+        use dashmap::mapref::entry::Entry;
+        match self.tables.entry(name.to_string()) {
+            Entry::Occupied(_) => false, // already exists
+            Entry::Vacant(v) => {
+                v.insert(Arc::new(LindormTable::new()));
+                true
+            }
+        }
     }
 
     pub fn get_table(&self, name: &str) -> Option<Arc<LindormTable>> {
