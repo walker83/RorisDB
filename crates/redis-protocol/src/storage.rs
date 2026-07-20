@@ -69,9 +69,12 @@ impl Database {
         self.data.get(key).and_then(|entry| {
             if let Some(expires_at) = entry.expires_at {
                 if Instant::now() > expires_at {
-                    // Expired - remove and return None
+                    let key_owned = entry.key().clone();
                     drop(entry);
-                    self.data.remove(key);
+                    // Use remove_if to avoid TOCTOU: only remove if still expired
+                    self.data.remove_if(&key_owned, |_, v| {
+                        v.expires_at.is_some_and(|t| Instant::now() > t)
+                    });
                     return None;
                 }
             }
