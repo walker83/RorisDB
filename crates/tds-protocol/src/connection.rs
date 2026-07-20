@@ -46,8 +46,13 @@ pub async fn run_connection(
 
         match packet.packet_type {
             TDS_LANGUAGE => {
-                // Extract SQL text (UTF-16LE encoded)
-                let sql = decode_tds_string(&packet.data);
+                // First byte is status indicator, rest is SQL text (UTF-16LE)
+                let sql_data = if packet.data.len() > 1 {
+                    &packet.data[1..]
+                } else {
+                    &packet.data
+                };
+                let sql = decode_tds_string(sql_data);
                 tracing::debug!("TDS Language: {}", sql);
 
                 let result = handler.handle_query(conn_id, &sql);
