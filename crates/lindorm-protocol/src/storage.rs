@@ -62,14 +62,16 @@ impl LindormTable {
     }
 
     pub fn scan(&self, start_row: &str, end_row: &str) -> Vec<(String, HashMap<String, HashMap<String, String>>)> {
-        self.rows
+        let mut results: Vec<(String, HashMap<String, HashMap<String, String>>)> = self.rows
             .iter()
             .filter(|entry| {
                 let key = entry.key();
                 key.as_str() >= start_row && key.as_str() < end_row
             })
             .map(|entry| (entry.key().clone(), entry.value().clone()))
-            .collect()
+            .collect();
+        results.sort_by(|a, b| a.0.cmp(&b.0));
+        results
     }
 
     pub fn count(&self) -> usize {
