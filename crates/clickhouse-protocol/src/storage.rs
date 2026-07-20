@@ -228,11 +228,8 @@ impl ClickHouseStorage {
             .or_insert_with(|| Arc::new(Database::new()));
     }
 
-    pub fn get_database(&self, name: &str) -> Arc<Database> {
-        self.databases
-            .entry(name.to_string())
-            .or_insert_with(|| Arc::new(Database::new()))
-            .clone()
+    pub fn get_database(&self, name: &str) -> Option<Arc<Database>> {
+        self.databases.get(name).map(|r| r.value().clone())
     }
 
     pub fn drop_database(&self, name: &str) -> bool {

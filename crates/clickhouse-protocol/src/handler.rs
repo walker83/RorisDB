@@ -499,7 +499,7 @@ impl DefaultClickHouseHandler {
         let raw_table = &tokens[from_idx + 1];
         let (qual_db, table_name) = parse_qualified_name(raw_table);
         let db_name = resolve_database(&qual_db, database);
-        let db = self.storage.get_database(&db_name);
+        let db = match self.storage.get_database(&db_name) { Some(d) => d, None => return "Error: Database not found".to_string() };
 
         let table = match db.get_table(&table_name) {
             Some(t) => t,
@@ -679,8 +679,10 @@ impl DefaultClickHouseHandler {
             ordered_rows
         };
 
-        // Format output
+        // Format output with column headers
         let mut result = String::new();
+        result.push_str(&select_columns.join("\t"));
+        result.push('\n');
         for row in &limited_rows {
             let values: Vec<String> = select_columns
                 .iter()
@@ -710,7 +712,7 @@ impl DefaultClickHouseHandler {
         let raw_table = &tokens[into_idx + 1];
         let (qual_db, table_name) = parse_qualified_name(raw_table);
         let db_name = resolve_database(&qual_db, database);
-        let db = self.storage.get_database(&db_name);
+        let db = match self.storage.get_database(&db_name) { Some(d) => d, None => return "Error: Database not found".to_string() };
 
         if db.get_table(&table_name).is_none() {
             return format!("Error: Table {} not found", table_name);
@@ -771,7 +773,7 @@ impl DefaultClickHouseHandler {
         let raw_table = &tokens[name_idx];
         let (qual_db, table_name) = parse_qualified_name(raw_table);
         let db_name = resolve_database(&qual_db, database);
-        let db = self.storage.get_database(&db_name);
+        let db = match self.storage.get_database(&db_name) { Some(d) => d, None => return "Error: Database not found".to_string() };
 
         // If table already exists and IF NOT EXISTS was specified, return OK
         if db.get_table(&table_name).is_some() {
@@ -890,7 +892,7 @@ impl DefaultClickHouseHandler {
             let raw_table = &tokens[name_idx];
             let (qual_db, table_name) = parse_qualified_name(raw_table);
             let db_name = resolve_database(&qual_db, database);
-            let db = self.storage.get_database(&db_name);
+            let db = match self.storage.get_database(&db_name) { Some(d) => d, None => return "Error: Database not found".to_string() };
             if db.drop_table(&table_name) {
                 "OK\n".to_string()
             } else {
@@ -921,7 +923,7 @@ impl DefaultClickHouseHandler {
                 database.to_string()
             };
 
-            let db = self.storage.get_database(&db_name);
+            let db = match self.storage.get_database(&db_name) { Some(d) => d, None => return "Error: Database not found".to_string() };
             let tables = db.list_tables();
             tables.join("\n") + "\n"
         } else {
@@ -946,7 +948,7 @@ impl DefaultClickHouseHandler {
         let raw_table = &tokens[table_idx];
         let (qual_db, table_name) = parse_qualified_name(raw_table);
         let db_name = resolve_database(&qual_db, database);
-        let db = self.storage.get_database(&db_name);
+        let db = match self.storage.get_database(&db_name) { Some(d) => d, None => return "Error: Database not found".to_string() };
 
         if let Some(table) = db.get_table(&table_name) {
             let mut result = String::new();
@@ -980,7 +982,7 @@ impl DefaultClickHouseHandler {
         let raw_table = &tokens[table_idx + 1];
         let (qual_db, table_name) = parse_qualified_name(raw_table);
         let db_name = resolve_database(&qual_db, database);
-        let db = self.storage.get_database(&db_name);
+        let db = match self.storage.get_database(&db_name) { Some(d) => d, None => return "Error: Database not found".to_string() };
 
         // Find UPDATE or DELETE
         let update_idx = find_keyword(&tokens, "UPDATE");
