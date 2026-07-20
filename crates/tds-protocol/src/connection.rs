@@ -77,6 +77,10 @@ pub async fn run_connection(
             }
             _ => {
                 tracing::warn!("Unknown TDS packet type: 0x{:02x}", packet.packet_type);
+                // Send error response for unhandled opcodes
+                let err = encode_error(0, 0, 1, &format!("Unsupported packet type 0x{:02x}", packet.packet_type), "HarnessDB");
+                let err_reply = TdsPacket::new(TDS_REPLY, err);
+                let _ = write_tds_packet(&mut stream, &err_reply).await;
             }
         }
     }
