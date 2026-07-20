@@ -51,8 +51,9 @@ impl DefaultOracleHandler {
             }
 
             // SELECT LENGTH('xxx') FROM DUAL
-            if let Some(rest) = expr_upper.strip_prefix("LENGTH(").and_then(|s| s.strip_suffix(')')) {
-                let inner = expr["LENGTH(".len()..expr.len()-1].trim().trim_matches('\'');
+            let trimmed_expr = expr.trim();
+            if let Some(rest) = expr_upper.trim().strip_prefix("LENGTH(").and_then(|s| s.strip_suffix(')')) {
+                let inner = trimmed_expr["LENGTH(".len()..trimmed_expr.len()-1].trim().trim_matches('\'');
                 return format!("LENGTH('{}')\n----------\n{}\n", inner, inner.len());
             }
 
