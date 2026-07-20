@@ -7,6 +7,73 @@
 
 ---
 
+## 修复状态 (2026-07-20)
+
+**已修复: ~50个bug** (20个提交)
+**剩余: ~320个bug** (主要是需要大规模架构改动的骨架实现)
+
+### 已修复的关键Bug
+
+| # | Crate | Bug | 修复 |
+|---|-------|-----|------|
+| 1 | MySQL | 二进制协议整数类型大小错误 | ✅ |
+| 2 | MySQL | USE命令大小写敏感 | ✅ |
+| 3 | MySQL | JWT回退密钥硬编码 | ✅ |
+| 4 | MySQL | COM_INIT_DB返回结果集而非OK包 | ✅ |
+| 5 | MySQL | DML affected_rows始终返回0 | ✅ |
+| 6 | PG | Parse发送ParameterDescription | ✅ |
+| 7 | PG | Describe执行DML副作用 | ✅ |
+| 8 | PG | Execute双重ReadyForQuery | ✅ |
+| 9 | PG | ALTER/EXPLAIN命令标签错误 | ✅ |
+| 10 | PG | information_schema路由contains | ✅ |
+| 11 | PG | 版本字符串过时 | ✅ |
+| 12 | PG | startup消息负数长度DoS | ✅ |
+| 13 | Redis | inline命令首字符丢失 | ✅ |
+| 14 | Redis | 负TTL wrapping | ✅ |
+| 15 | Redis | ZADD返回值错误 | ✅ |
+| 16 | Redis | bulk string/array无大小限制 | ✅ |
+| 17 | Redis | invalid integer静默挂起 | ✅ |
+| 18 | Redis | dead code write_buf | ✅ |
+| 19 | ClickHouse | delete_where列长度panic | ✅ |
+| 20 | ClickHouse | HTTP状态码始终200 | ✅ |
+| 21 | ClickHouse | SELECT无列头 | ✅ |
+| 22 | ClickHouse | get_database自动创建 | ✅ |
+| 23 | MongoDB | $group字段引用不可达 | ✅ |
+| 24 | MongoDB | $match管道重新查询 | ✅ |
+| 25 | MongoDB | $exists null混淆 | ✅ |
+| 26 | MongoDB | 未知操作符静默通过 | ✅ |
+| 27 | ES | HTTP状态码始终200 | ✅ |
+| 28 | Cassandra | 负数body length panic | ✅ |
+| 29 | Cassandra | get_keyspace自动创建 | ✅ |
+| 30 | Lindorm | create_table覆盖已存在表 | ✅ |
+| 31 | fe-storage | drop_table/create_table缺写锁 | ✅ |
+| 32 | fe-storage | filter pushdown静默丢弃 | ✅ |
+| 33 | fe-storage | 目录fsync缺失 | ✅ |
+| 34 | fe-storage | ALTER TABLE空表不生效 | ✅ |
+| 35 | DataFusion | UInt64→Int64截断 | ✅ |
+| 36 | DataFusion | date_add i64→i32截断 | ✅ |
+| 37 | DataFusion | unix_timestamp volatility | ✅ |
+| 38 | DataFusion | substring_index count=0 | ✅ |
+| 39 | SQL Parser | COMMIT;解析失败 | ✅ |
+| 40 | SQL Parser | CATALOG大小写敏感 | ✅ |
+| 41 | SQL Parser | INSERT SET大小写敏感 | ✅ |
+| 42 | SQL Parser | materialized view AS替换 | ✅ |
+| 43 | SQL Parser | isolation level默认值 | ✅ |
+| 44 | SQL Parser | 三段式名称 | ✅ |
+| 45 | fe-catalog | test_rocks_backend测试 | ✅ |
+| 46 | Security | JWT回退密钥 | ✅ |
+
+### 剩余需要大规模重构的Bug
+
+| Crate | Bug数 | 说明 |
+|-------|-------|------|
+| Oracle/TDS/Sybase/TSQL | 95 | 骨架实现，需要完整协议重写 |
+| Cassandra | ~20 | INSERT/UPDATE/DELETE是空操作 |
+| ADB MySQL | ~15 | 聚合函数、NaN处理 |
+| 其余 | ~190 | 中低优先级协议合规性、代码质量 |
+
+---
+
 ## 执行摘要
 
 | 指标 | 数值 |
