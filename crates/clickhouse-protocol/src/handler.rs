@@ -616,7 +616,7 @@ impl DefaultClickHouseHandler {
         // Check for COUNT(*) in select
         let is_count = select_tokens.iter().any(|t| {
             let u = t.to_uppercase();
-            u == "COUNT(*)" || u == "COUNT"
+            u == "COUNT(*)" || u.starts_with("COUNT(")
         });
 
         if is_count {
