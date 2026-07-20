@@ -633,7 +633,7 @@ impl Connection {
         let send_start = Instant::now();
 
         if result.columns.is_empty() {
-            self.send_ok(0, 0).await?;
+            self.send_ok(result.rows.len() as u64, 0).await?;
             return Ok(());
         }
 
