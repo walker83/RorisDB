@@ -116,7 +116,7 @@ pub fn encode_colmetadata(columns: &[TdsColumnDef]) -> Vec<u8> {
     for col in columns {
         // Column name length + name (UTF-16LE)
         let name_chars: Vec<u16> = col.name.encode_utf16().collect();
-        buf.push(name_chars.len() as u8);
+        buf.push(name_chars.len().min(255) as u8);
         for ch in &name_chars { buf.extend_from_slice(&ch.to_le_bytes()); }
         // Status (nullable=1)
         buf.push(1);
