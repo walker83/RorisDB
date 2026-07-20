@@ -562,9 +562,9 @@ impl AdbMysqlHandler {
                     let rv = self.eval_expr_value(right, row, columns);
                     compare_string_values(&lv, &rv) != Some(std::cmp::Ordering::Greater)
                 }
-                _ => true,
+                _ => false, // Unknown operator — reject row
             },
-            _ => true,
+            _ => false,
         }
     }
 
