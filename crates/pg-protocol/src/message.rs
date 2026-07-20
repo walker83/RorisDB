@@ -733,15 +733,10 @@ fn read_cstring(buf: &mut BytesMut) -> Result<String, PgProtocolError> {
             Ok(s)
         }
         None => {
-            // No null terminator found — but if there's remaining data we may have a partial message
-            // Restore the buffer position tracking
             if buf.is_empty() {
                 Err(PgProtocolError::UnexpectedEof)
             } else {
-                // Treat remaining bytes as the string (no null terminator)
-                let s = String::from_utf8_lossy(buf).to_string();
-                buf.advance(buf.len());
-                Ok(s)
+                Err(PgProtocolError::UnexpectedEof) // No null terminator = malformed
             }
         }
     }

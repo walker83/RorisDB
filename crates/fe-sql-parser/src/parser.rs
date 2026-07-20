@@ -1046,7 +1046,8 @@ fn parse_show_status(sql: &str) -> Result<Vec<Statement>, ParseError> {
         .trim();
 
     // Parse: SHOW [GLOBAL|SESSION] STATUS [LIKE pattern]
-    let mut global = true;
+    // MySQL default: SESSION status (not GLOBAL)
+    let mut global = false;
     let mut rest_upper = after_show_upper;
 
     // Skip "STATUS" keyword
