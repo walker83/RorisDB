@@ -1851,7 +1851,7 @@ fn extract_identifier(s: &str) -> Option<(&str, &str)> {
         return None;
     }
 
-    if s.starts_with('"') || s.starts_with('\'') {
+    if s.starts_with('"') || s.starts_with('\'') || s.starts_with('`') {
         let quote = s.chars().next().unwrap_or('"');
         let rest = &s[1..];
         let end = rest.find(quote).unwrap_or(0);
