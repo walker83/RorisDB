@@ -364,9 +364,14 @@ impl ElasticsearchCommandHandler for DefaultElasticsearchHandler {
                             i += 2;
                         }
                     }
+                    let has_errors = items.iter().any(|item| {
+                        item.get("index").and_then(|i| i.get("status")).and_then(|s| s.as_u64()).unwrap_or(200) >= 400
+                        || item.get("update").and_then(|i| i.get("status")).and_then(|s| s.as_u64()).unwrap_or(200) >= 400
+                        || item.get("delete").and_then(|i| i.get("status")).and_then(|s| s.as_u64()).unwrap_or(200) >= 400
+                    });
                     json!({
                         "took": 1,
-                        "errors": false,
+                        "errors": has_errors,
                         "items": items
                     })
                 } else {
