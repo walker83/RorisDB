@@ -150,7 +150,7 @@ impl Collection {
                         false
                     }
                 }
-                _ => true, // Unknown operator – pass through
+                _ => false, // Unknown operator – reject
             };
             if !result {
                 return false;
