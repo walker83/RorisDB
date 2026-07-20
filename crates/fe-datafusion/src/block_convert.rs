@@ -432,7 +432,13 @@ fn convert_array_to_vector_by_type(
                 .downcast_ref::<UInt64Array>()
                 .ok_or("Not UInt64Array")?;
             let data: Vec<Option<i64>> = (0..arr.len())
-                .map(|i| (!arr.is_null(i)).then(|| arr.value(i) as i64))
+                .map(|i| {
+                    if arr.is_null(i) {
+                        None
+                    } else {
+                        Some(i64::try_from(arr.value(i)).unwrap_or(i64::MAX))
+                    }
+                })
                 .collect();
             Vector::Int64(Int64Vector::from_nullable_vec(data))
         }

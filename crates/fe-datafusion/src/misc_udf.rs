@@ -373,7 +373,14 @@ pub fn create_group_concat_udf() -> AggregateUDF {
                     })?;
                 for j in 0..str_inner.len() {
                     if !str_inner.is_null(j) {
-                        self.values.push(str_inner.value(j).to_string());
+                        let val = str_inner.value(j).to_string();
+                        if self.is_distinct {
+                            if self.seen.insert(val.clone()) {
+                                self.values.push(val);
+                            }
+                        } else {
+                            self.values.push(val);
+                        }
                     }
                 }
             }

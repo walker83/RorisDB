@@ -233,10 +233,13 @@ impl Connection {
                     .await
             }
             "auth_token" => {
-                let jwt_secret = std::env::var("RORIS_JWT_SECRET").unwrap_or_else(|_| {
-                    tracing::warn!("RORIS_JWT_SECRET not set — token auth using fallback key");
-                    "harnessdb_dev_fallback_key".to_string()
-                });
+                let jwt_secret = match std::env::var("RORIS_JWT_SECRET") {
+                    Ok(s) if !s.is_empty() => s,
+                    _ => {
+                        tracing::error!("RORIS_JWT_SECRET not set — rejecting token auth");
+                        return Err(AuthError::InvalidCredentials);
+                    }
+                };
                 let config = TokenConfig::new(jwt_secret, 3600, "harnessdb".to_string());
                 let auth = TokenAuth::new(config);
                 auth.authenticate(username, auth_response, &self.auth_salt)
@@ -617,8 +620,8 @@ impl Connection {
         // Sync connection database state for USE commands (reuse trimmed, no double lowercase)
         if trimmed.starts_with("use ") {
             // Extract database name from USE statement
-            if let Some(pos) = sql.trim().find("USE ") {
-                let after_use = &sql.trim()[pos + 4..].trim().trim_end_matches(';').trim();
+            if let Some(pos) = trimmed.find("use ") {
+                let after_use = &trimmed[pos + 4..].trim().trim_end_matches(';').trim();
                 let db_name = after_use.split_whitespace().next().unwrap_or(after_use);
                 if !db_name.is_empty() {
                     self.database = Some(db_name.to_string());
@@ -1097,7 +1100,7 @@ impl Connection {
                     }
                 } else if len_byte == 0xFC {
                     // 2-byte length
-                    if offset + 2 <= data.len() {
+                    if offset + 3 <= data.len() {
                         let len = u16::from_le_bytes([data[offset + 1], data[offset + 2]]) as usize;
                         if offset + 3 + len <= data.len() {
                             let s = String::from_utf8_lossy(&data[offset + 3..offset + 3 + len]);

@@ -254,7 +254,7 @@ fn evaluate_single_condition(row: &HashMap<String, String>, condition: &str) -> 
     // Parse comparison: col OP val
     let operators = [">=", "<=", "!=", "<>", "=", ">", "<"];
     for op in &operators {
-        if let Some(pos) = condition.find(op) {
+        if let Some(pos) = condition.rfind(op) {
             // Make sure we're not matching part of a different operator
             let col = condition[..pos].trim().to_string();
             let val_str = condition[pos + op.len()..].trim();
@@ -882,7 +882,7 @@ impl DefaultClickHouseHandler {
                 .unwrap();
             let mut name_idx = table_idx + 1;
             if name_idx < tokens.len() && tokens[name_idx].to_uppercase() == "IF" {
-                name_idx += 2; // skip IF EXISTS
+                name_idx += 3; // skip IF EXISTS
             }
             if name_idx >= tokens.len() {
                 return "Error: Missing table name".to_string();

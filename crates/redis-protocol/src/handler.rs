@@ -314,6 +314,7 @@ impl DefaultRedisHandler {
             None => return RespEncoder::error("ERR invalid key"),
         };
         let seconds = match self.get_arg_int(&args[1]) {
+            Some(s) if s < 0 => return RespEncoder::error("ERR invalid expire time"),
             Some(s) => s,
             None => return RespEncoder::error("ERR invalid expire time"),
         };
@@ -461,6 +462,9 @@ impl DefaultRedisHandler {
                     "EX" => {
                         if i + 1 < args.len() {
                             if let Some(secs) = self.get_arg_int(&args[i + 1]) {
+                                if secs <= 0 {
+                                    return RespEncoder::error("ERR invalid expire time in 'set' command");
+                                }
                                 ttl = Some(Duration::from_secs(secs as u64));
                             }
                             i += 2;
@@ -471,6 +475,9 @@ impl DefaultRedisHandler {
                     "PX" => {
                         if i + 1 < args.len() {
                             if let Some(ms) = self.get_arg_int(&args[i + 1]) {
+                                if ms <= 0 {
+                                    return RespEncoder::error("ERR invalid expire time in 'set' command");
+                                }
                                 ttl = Some(Duration::from_millis(ms as u64));
                             }
                             i += 2;

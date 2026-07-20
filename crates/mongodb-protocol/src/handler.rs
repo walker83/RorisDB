@@ -154,11 +154,16 @@ impl DefaultMongoDBHandler {
 
         let mut inserted = 0;
         for doc in docs {
+            let mut doc = (*doc).clone();
             let id = doc
                 .get_object_id("_id")
                 .map(|oid| oid.to_hex())
-                .unwrap_or_else(|_| bson::oid::ObjectId::new().to_hex());
-            collection.insert(id, (*doc).clone());
+                .unwrap_or_else(|_| {
+                    let oid = bson::oid::ObjectId::new();
+                    doc.insert("_id", Bson::ObjectId(oid));
+                    oid.to_hex()
+                });
+            collection.insert(id, doc);
             inserted += 1;
         }
 
@@ -323,7 +328,8 @@ impl DefaultMongoDBHandler {
         for stage_value in pipeline {
             if let Some(stage) = stage_value.as_document() {
                 if let Some(match_filter) = stage.get_document("$match").ok() {
-                    current_docs = collection.find(Some(match_filter));
+                    let filter = match_filter.clone();
+                    current_docs.retain(|doc| crate::storage::Collection::matches_filter(doc, &filter));
                 } else if let Some(group_spec) = stage.get_document("$group").ok() {
                     current_docs = Self::apply_group_stage(&current_docs, group_spec);
                 } else if let Ok(count_field) = stage.get_str("$count") {
@@ -364,16 +370,19 @@ impl DefaultMongoDBHandler {
 
         for doc in docs {
             let group_key = match id_expr {
-                // Constant value (e.g. _id: 1 or _id: null) - all docs in one group
+                // Field reference (e.g. _id: "$field_name")
+                Some(Bson::String(field_ref)) if field_ref.starts_with('$') => {
+                    let field_name = &field_ref[1..];
+                    match crate::storage::Collection::get_field(doc, field_name) {
+                        Some(v) => format!("{:?}", v),
+                        None => "null".to_string(),
+                    }
+                }
+                // Constant value (e.g. _id: 1 or _id: "constant") - all docs in one group
                 Some(Bson::Int32(v)) => v.to_string(),
                 Some(Bson::Int64(v)) => v.to_string(),
                 Some(Bson::String(v)) => v.clone(),
                 Some(Bson::Null) | None => "null".to_string(),
-                // Field reference (e.g. _id: "$field_name")
-                Some(Bson::String(field_ref)) if field_ref.starts_with('$') => {
-                    // ... handled below
-                    "field_ref".to_string()
-                }
                 _ => "default".to_string(),
             };
             groups.entry(group_key).or_default().push(doc);

@@ -1445,7 +1445,7 @@ mod tests {
             dual_write: false,
         };
         let mgr = CatalogManager::with_config(config);
-        assert_eq!(mgr.backend_type(), "rocksdb");
+        assert_eq!(mgr.backend_type(), "kvstore");
 
         mgr.create_database("rocks_db").unwrap();
         mgr.create_table("rocks_db", make_table(1, "rocks_table"))

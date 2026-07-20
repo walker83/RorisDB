@@ -163,6 +163,7 @@ impl ParquetStorage {
 
     /// Create a new table: creates directory and writes an empty schema-only Parquet file.
     pub fn create_table(&self, db: &str, table: &str, schema: Arc<ArrowSchema>) -> Result<()> {
+        let _guard = self.lock_table(db, table);
         let dir = self.table_dir(db, table);
         std::fs::create_dir_all(&dir)?;
 
@@ -177,6 +178,7 @@ impl ParquetStorage {
 
     /// Drop a table: removes the table directory.
     pub fn drop_table(&self, db: &str, table: &str) -> Result<()> {
+        let _guard = self.lock_table(db, table);
         let dir = self.table_dir(db, table);
         if dir.exists() {
             std::fs::remove_dir_all(&dir)?;
@@ -413,18 +415,29 @@ mod write {
             .build();
 
         let file = std::fs::File::create(&temp_path)?;
-        let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))
-            .map_err(|e| StorageError::Parquet(e.to_string()))?;
+        let write_result = (|| -> Result<()> {
+            let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))
+                .map_err(|e| StorageError::Parquet(e.to_string()))?;
 
-        writer
-            .write(batch)
-            .map_err(|e| StorageError::Parquet(e.to_string()))?;
-        writer
-            .close()
-            .map_err(|e| StorageError::Parquet(e.to_string()))?;
+            writer
+                .write(batch)
+                .map_err(|e| StorageError::Parquet(e.to_string()))?;
+            writer
+                .close()
+                .map_err(|e| StorageError::Parquet(e.to_string()))?;
+            Ok(())
+        })();
+
+        if let Err(e) = write_result {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(e);
+        }
 
         // fsync before rename for crash safety
-        std::fs::File::open(&temp_path)?.sync_all()?;
+        if let Err(e) = std::fs::File::open(&temp_path).and_then(|f| f.sync_all()) {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(e.into());
+        }
         std::fs::rename(&temp_path, path)?;
         debug!("Written {} rows to {}", batch.num_rows(), path.display());
         Ok(())
@@ -501,5 +514,162 @@ mod read {
 
         arrow_select::concat::concat_batches(&batches[0].schema(), &batches)
             .map_err(|e| StorageError::Arrow(e.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_array::{Int32Array, StringArray};
+    use arrow_schema::{DataType, Field, Schema};
+    use std::sync::Arc;
+    use std::thread;
+
+    fn test_schema() -> Arc<Schema> {
+        Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("name", DataType::Utf8, true),
+        ]))
+    }
+
+    #[test]
+    fn test_create_table_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = ParquetStorage::open(dir.path()).unwrap();
+        let schema = test_schema();
+
+        // Creating the same table twice should not fail (idempotent)
+        storage.create_table("db1", "t1", schema.clone()).unwrap();
+        storage.create_table("db1", "t1", schema).unwrap();
+
+        assert!(storage.table_exists("db1", "t1"));
+        // Cleanup
+        storage.drop_table("db1", "t1").unwrap();
+    }
+
+    #[test]
+    fn test_drop_table_nonexistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = ParquetStorage::open(dir.path()).unwrap();
+
+        // Dropping a non-existent table should not fail
+        storage.drop_table("db1", "no_such_table").unwrap();
+    }
+
+    #[test]
+    fn test_create_and_drop_table_concurrent() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(ParquetStorage::open(dir.path()).unwrap());
+        let schema = test_schema();
+
+        // Pre-create the table so both threads race on create + drop
+        storage.create_table("db1", "t1", schema.clone()).unwrap();
+
+        let mut handles = vec![];
+        for _ in 0..4 {
+            let s = Arc::clone(&storage);
+            let sch = schema.clone();
+            handles.push(thread::spawn(move || {
+                // Each thread: drop then re-create
+                s.drop_table("db1", "t1").unwrap();
+                s.create_table("db1", "t1", sch).unwrap();
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // Table should still exist and be readable
+        assert!(storage.table_exists("db1", "t1"));
+        let rb = storage.read("db1", "t1").unwrap();
+        assert_eq!(rb.num_rows(), 0);
+        assert_eq!(rb.num_columns(), 2);
+
+        storage.drop_table("db1", "t1").unwrap();
+    }
+
+    #[test]
+    fn test_insert_and_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = ParquetStorage::open(dir.path()).unwrap();
+        let schema = test_schema();
+
+        storage.create_table("db1", "t1", schema.clone()).unwrap();
+
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(Int32Array::from(vec![1, 2, 3])),
+                Arc::new(StringArray::from(vec!["a", "b", "c"])),
+            ],
+        )
+        .unwrap();
+
+        storage.insert("db1", "t1", batch).unwrap();
+
+        let result = storage.read("db1", "t1").unwrap();
+        assert_eq!(result.num_rows(), 3);
+        assert_eq!(result.num_columns(), 2);
+
+        let ids = result
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        assert_eq!(ids.value(0), 1);
+        assert_eq!(ids.value(1), 2);
+        assert_eq!(ids.value(2), 3);
+
+        storage.drop_table("db1", "t1").unwrap();
+    }
+
+    #[test]
+    fn test_read_nonexistent_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = ParquetStorage::open(dir.path()).unwrap();
+
+        let result = storage.read("db1", "no_such_table");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            StorageError::TableNotFound(db, tbl) => {
+                assert_eq!(db, "db1");
+                assert_eq!(tbl, "no_such_table");
+            }
+            other => panic!("Expected TableNotFound, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_insert_concurrent_serialized() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(ParquetStorage::open(dir.path()).unwrap());
+        let schema = test_schema();
+
+        storage.create_table("db1", "t1", schema.clone()).unwrap();
+
+        let mut handles = vec![];
+        for i in 0..4 {
+            let s = Arc::clone(&storage);
+            let sch = schema.clone();
+            handles.push(thread::spawn(move || {
+                let batch = RecordBatch::try_new(
+                    sch,
+                    vec![
+                        Arc::new(Int32Array::from(vec![i])),
+                        Arc::new(StringArray::from(vec![format!("row_{}", i)])),
+                    ],
+                )
+                .unwrap();
+                s.insert("db1", "t1", batch).unwrap();
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let result = storage.read("db1", "t1").unwrap();
+        assert_eq!(result.num_rows(), 4);
+
+        storage.drop_table("db1", "t1").unwrap();
     }
 }

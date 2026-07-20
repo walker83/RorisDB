@@ -424,7 +424,7 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
     }
 
     // Transaction statements - before sqlparser since sqlparser may not handle all variants
-    let upper = trimmed.as_str();
+    let upper = trimmed.trim_end_matches(';').trim();
     if upper == "START TRANSACTION" || upper == "BEGIN" || upper == "BEGIN WORK" {
         return Ok(vec![Statement::StartTransaction]);
     }
@@ -599,13 +599,15 @@ fn convert_insert_set_to_values(sql: &str) -> Result<String, ParseError> {
         .trim();
 
     // Find the table name (before SET)
-    let parts: Vec<&str> = after_into.splitn(2, " SET ").collect();
-    if parts.len() != 2 {
-        return Err(ParseError::SyntaxError {
-            position: 0,
-            message: "INSERT ... SET syntax requires SET clause".to_string(),
-        });
-    }
+    // Case-insensitive search for " SET " delimiter
+    let upper = after_into.to_uppercase();
+    let set_pos = upper.find(" SET ").ok_or_else(|| ParseError::SyntaxError {
+        position: 0,
+        message: "INSERT ... SET syntax requires SET clause".to_string(),
+    })?;
+    let table_part = &after_into[..set_pos];
+    let set_part = &after_into[set_pos + 5..]; // skip " SET "
+    let parts = vec![table_part, set_part];
 
     let table_and_cols = parts[0].trim();
     let set_clause = parts[1].trim();
@@ -3176,8 +3178,7 @@ fn extract_username_hostname(s: &str) -> Result<(String, String), ParseError> {
 
 fn parse_create_catalog(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let sql = sql.trim();
-    let after_create = sql
-        .strip_prefix("CREATE CATALOG")
+    let after_create = strip_prefix_ci(sql, "CREATE CATALOG")
         .ok_or_else(|| ParseError::SyntaxError {
             position: 0,
             message: "Expected CREATE CATALOG".to_string(),
@@ -3193,16 +3194,14 @@ fn parse_create_catalog(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let mut catalog_type = "iceberg".to_string();
     let mut properties = vec![];
 
-    if rest.starts_with("PROPERTIES") || rest.starts_with("WITH") {
-        let after_with = if rest.starts_with("PROPERTIES") {
-            rest.strip_prefix("PROPERTIES").unwrap_or_default().trim()
-        } else {
-            rest.strip_prefix("WITH").unwrap_or_default().trim()
-        };
+    if strip_prefix_ci(rest, "PROPERTIES").is_some() || strip_prefix_ci(rest, "WITH").is_some() {
+        let after_with = strip_prefix_ci(rest, "PROPERTIES")
+            .or_else(|| strip_prefix_ci(rest, "WITH"))
+            .unwrap_or_default()
+            .trim();
 
-        if after_with.starts_with("TYPE") {
-            let type_part = after_with
-                .strip_prefix("TYPE")
+        if strip_prefix_ci(after_with, "TYPE").is_some() {
+            let type_part = strip_prefix_ci(after_with, "TYPE")
                 .unwrap_or("")
                 .trim()
                 .trim_start_matches('=')
@@ -3231,9 +3230,7 @@ fn parse_drop_catalog(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let sql = sql.trim();
     let if_exists = sql.to_uppercase().contains("IF EXISTS");
 
-    let after_drop = sql
-        .strip_prefix("DROP CATALOG")
-        .or_else(|| sql.strip_prefix("drop catalog"))
+    let after_drop = strip_prefix_ci(sql, "DROP CATALOG")
         .ok_or_else(|| ParseError::SyntaxError {
             position: 0,
             message: "Expected DROP CATALOG".to_string(),
@@ -3253,13 +3250,14 @@ fn parse_drop_catalog(sql: &str) -> Result<Vec<Statement>, ParseError> {
 
 fn parse_refresh_catalog(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let sql = sql.trim();
-    let after_refresh = sql
+    let upper = sql.to_uppercase();
+    let after_refresh = upper
         .strip_prefix("REFRESH CATALOG")
+        .map(|_| sql["REFRESH CATALOG".len()..].trim())
         .ok_or_else(|| ParseError::SyntaxError {
             position: 0,
             message: "Expected REFRESH CATALOG".to_string(),
-        })?
-        .trim();
+        })?;
 
     let (name, _) = extract_identifier(after_refresh).ok_or_else(|| ParseError::SyntaxError {
         position: 0,

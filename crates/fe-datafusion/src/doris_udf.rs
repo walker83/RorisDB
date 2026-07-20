@@ -546,7 +546,9 @@ pub fn create_substring_index_udf() -> ScalarUDF {
                 .zip(count_arr.iter())
                 .map(|((s, d), c)| match (s, d, c) {
                     (Some(str), Some(delim), Some(count)) => {
-                        if count > 0 {
+                        if count == 0 {
+                            Some(String::new())
+                        } else if count > 0 {
                             let parts: Vec<&str> = str.split(delim).collect();
                             if parts.len() >= count as usize {
                                 Some(parts[..count as usize].join(delim))

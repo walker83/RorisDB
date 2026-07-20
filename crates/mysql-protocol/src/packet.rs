@@ -1164,9 +1164,9 @@ fn encode_binary_value(pb: &mut PacketBuilder, val: &BinaryValue) {
 pub fn text_to_binary(text: Option<&str>, col_type: u8) -> Option<BinaryValue> {
     let text = text?;
     match col_type {
-        column_type::TINY => text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n)),
-        column_type::SHORT => text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n)),
-        column_type::LONG => text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n)),
+        column_type::TINY => text.parse::<i8>().ok().map(|n| BinaryValue::Int8(n)),
+        column_type::SHORT => text.parse::<i16>().ok().map(|n| BinaryValue::Int16(n)),
+        column_type::LONG => text.parse::<i32>().ok().map(|n| BinaryValue::Int32(n)),
         column_type::LONGLONG => text.parse::<i64>().ok().map(|n| BinaryValue::Int64(n)),
         column_type::FLOAT => text.parse::<f64>().ok().map(|f| BinaryValue::Double(f)),
         column_type::DOUBLE => text.parse::<f64>().ok().map(|f| BinaryValue::Double(f)),

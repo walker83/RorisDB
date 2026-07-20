@@ -51,6 +51,11 @@ impl Collection {
         self.documents.len()
     }
 
+    /// Get a field value from a document supporting dot notation (public API)
+    pub fn get_field<'a>(doc: &'a Document, field: &str) -> Option<&'a Bson> {
+        Self::get_field_value(doc, field)
+    }
+
     /// Get a field value supporting dot notation (e.g. "address.city")
     fn get_field_value<'a>(doc: &'a Document, field: &str) -> Option<&'a Bson> {
         if let Some(val) = doc.get(field) {
@@ -85,27 +90,17 @@ impl Collection {
     }
 
     /// Check if a document matches a filter, supporting query operators
-    fn matches_filter(doc: &Document, filter: &Document) -> bool {
+    pub fn matches_filter(doc: &Document, filter: &Document) -> bool {
         for (key, filter_value) in filter {
-            match Self::get_field_value(doc, key) {
-                Some(doc_value) => {
-                    if let Some(op_doc) = filter_value.as_document() {
-                        if !Self::matches_operators(doc_value, op_doc) {
-                            return false;
-                        }
-                    } else if doc_value != filter_value {
-                        return false;
-                    }
+            let doc_value = Self::get_field_value(doc, key);
+            if let Some(op_doc) = filter_value.as_document() {
+                if !Self::matches_operators(doc_value, op_doc) {
+                    return false;
                 }
-                None => {
-                    // Field missing – check if filter expects $exists: false
-                    if let Some(op_doc) = filter_value.as_document() {
-                        if !Self::matches_operators(&Bson::Null, op_doc) {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
+            } else {
+                match doc_value {
+                    Some(v) if v == filter_value => {}
+                    _ => return false,
                 }
             }
         }
@@ -113,46 +108,46 @@ impl Collection {
     }
 
     /// Evaluate query operators ($eq, $ne, $gt, $gte, $lt, $lte, $in, $regex, $exists)
-    fn matches_operators(doc_value: &Bson, op_doc: &Document) -> bool {
+    fn matches_operators(doc_value: Option<&Bson>, op_doc: &Document) -> bool {
         for (op, op_val) in op_doc {
             let result = match op.as_str() {
-                "$eq" => doc_value == op_val,
-                "$ne" => doc_value != op_val,
-                "$gt" => Self::bson_cmp(doc_value, op_val)
-                    .map(|o| o.is_gt())
+                "$exists" => {
+                    let exists = doc_value.is_some();
+                    match op_val.as_bool() {
+                        Some(b) => exists == b,
+                        None => false,
+                    }
+                }
+                "$eq" => doc_value.map_or(false, |v| v == op_val),
+                "$ne" => doc_value.map_or(true, |v| v != op_val),
+                "$gt" => doc_value
+                    .and_then(|v| Self::bson_cmp(v, op_val).map(|o| o.is_gt()))
                     .unwrap_or(false),
-                "$gte" => Self::bson_cmp(doc_value, op_val)
-                    .map(|o| o.is_ge())
+                "$gte" => doc_value
+                    .and_then(|v| Self::bson_cmp(v, op_val).map(|o| o.is_ge()))
                     .unwrap_or(false),
-                "$lt" => Self::bson_cmp(doc_value, op_val)
-                    .map(|o| o.is_lt())
+                "$lt" => doc_value
+                    .and_then(|v| Self::bson_cmp(v, op_val).map(|o| o.is_lt()))
                     .unwrap_or(false),
-                "$lte" => Self::bson_cmp(doc_value, op_val)
-                    .map(|o| o.is_le())
+                "$lte" => doc_value
+                    .and_then(|v| Self::bson_cmp(v, op_val).map(|o| o.is_le()))
                     .unwrap_or(false),
                 "$in" => {
-                    if let Some(arr) = op_val.as_array() {
-                        arr.contains(doc_value)
+                    if let (Some(v), Some(arr)) = (doc_value, op_val.as_array()) {
+                        arr.contains(v)
                     } else {
                         false
                     }
                 }
                 "$regex" => {
-                    if let (Some(doc_str), Some(pattern_str)) =
-                        (doc_value.as_str(), op_val.as_str())
+                    if let (Some(v), Some(pattern_str)) =
+                        (doc_value.and_then(|v| v.as_str()), op_val.as_str())
                     {
                         regex::Regex::new(pattern_str)
-                            .map(|re| re.is_match(doc_str))
+                            .map(|re| re.is_match(v))
                             .unwrap_or(false)
                     } else {
                         false
-                    }
-                }
-                "$exists" => {
-                    let exists = !matches!(doc_value, Bson::Null);
-                    match op_val.as_bool() {
-                        Some(b) => exists == b,
-                        None => false,
                     }
                 }
                 _ => true, // Unknown operator – pass through

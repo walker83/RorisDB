@@ -260,7 +260,7 @@ impl RespParser {
     }
 
     fn parse_inline(buf: &mut BytesMut) -> Result<Option<RespValue>, RespError> {
-        match Self::parse_line(buf) {
+        match Self::parse_line_inline(buf) {
             Ok(Some(line)) => {
                 // Split by spaces into array
                 let parts: Vec<RespValue> = line
@@ -278,6 +278,19 @@ impl RespParser {
         match Self::find_crlf(buf, 1) {
             Some(pos) => {
                 let line = std::str::from_utf8(&buf[1..pos])
+                    .map_err(|_| RespError::InvalidData)?
+                    .to_string();
+                buf.advance(pos + 2);
+                Ok(Some(line))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn parse_line_inline(buf: &mut BytesMut) -> Result<Option<String>, RespError> {
+        match Self::find_crlf(buf, 0) {
+            Some(pos) => {
+                let line = std::str::from_utf8(&buf[0..pos])
                     .map_err(|_| RespError::InvalidData)?
                     .to_string();
                 buf.advance(pos + 2);

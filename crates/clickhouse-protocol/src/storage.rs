@@ -64,7 +64,16 @@ impl Table {
     where
         F: Fn(&HashMap<String, String>) -> bool,
     {
-        let row_count = self.columns.values().next().map(|c| c.len()).unwrap_or(0);
+        // Validate all columns have the same length to prevent index panics
+        let lengths: Vec<usize> = self.columns.values().map(|c| c.len()).collect();
+        if lengths.is_empty() {
+            return 0;
+        }
+        let row_count = lengths[0];
+        if lengths.iter().any(|&l| l != row_count) {
+            return 0; // column length mismatch, skip deletion
+        }
+
         let mut keep = Vec::with_capacity(row_count);
 
         for i in 0..row_count {

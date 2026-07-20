@@ -15,9 +15,44 @@ pub fn double_sha1(password: &[u8]) -> Vec<u8> {
 }
 
 /// Create a default credentials map with root user (empty password).
+/// WARNING: For testing only. Production code should use `secure_credentials()`.
 pub fn default_credentials() -> Credentials {
     let creds = DashMap::new();
     creds.insert("root".to_string(), double_sha1(b""));
+    Arc::new(creds)
+}
+
+/// Create credentials for production use, reading root password from
+/// HARNESS_ROOT_PASSWORD env var. If not set, a random password is generated
+/// and logged once at startup.
+pub fn secure_credentials() -> Credentials {
+    let password = match std::env::var("HARNESS_ROOT_PASSWORD") {
+        Ok(p) if !p.is_empty() => p,
+        _ => {
+            use std::sync::OnceLock;
+            static GEN_PASS: OnceLock<String> = OnceLock::new();
+            GEN_PASS
+                .get_or_init(|| {
+                    use std::time::SystemTime;
+                    let now = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos();
+                    let pid = std::process::id() as u128;
+                    let rand = now ^ (pid << 32) ^ (now.wrapping_mul(6364136223846793005));
+                    let pass = format!("{:024x}", rand);
+                    tracing::warn!(
+                        "HARNESS_ROOT_PASSWORD not set — generated random root password: {} \
+                         Set HARNESS_ROOT_PASSWORD env var for stable credentials.",
+                        pass
+                    );
+                    pass
+                })
+                .clone()
+        }
+    };
+    let creds = DashMap::new();
+    creds.insert("root".to_string(), double_sha1(password.as_bytes()));
     Arc::new(creds)
 }
 

@@ -1301,7 +1301,7 @@ pub fn create_unix_timestamp_udf() -> ScalarUDF {
                         datafusion::logical_expr::TypeSignature::Exact(vec![]),
                         datafusion::logical_expr::TypeSignature::Exact(vec![DataType::Utf8]),
                     ],
-                    Volatility::Immutable,
+                    Volatility::Volatile,
                 ),
             }
         }
@@ -1820,7 +1820,8 @@ pub fn create_date_add_udf() -> ScalarUDF {
                 .map(|(d, n)| match (d, n) {
                     (Some(date), Some(n)) => {
                         // Date32 is already days since epoch, so just add
-                        Some(date + n as i32)
+                        let n_clamped = n.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+                        Some(date + n_clamped)
                     }
                     _ => None,
                 })
@@ -1898,7 +1899,8 @@ pub fn create_date_sub_udf() -> ScalarUDF {
                 .map(|(d, n)| match (d, n) {
                     (Some(date), Some(n)) => {
                         // Negate the days argument for subtraction
-                        Some(date - n as i32)
+                        let n_clamped = n.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+                        Some(date - n_clamped)
                     }
                     _ => None,
                 })

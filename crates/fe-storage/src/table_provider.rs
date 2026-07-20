@@ -13,6 +13,7 @@ use arrow_ord::cmp;
 use arrow_schema::Schema as ArrowSchema;
 use arrow_select::filter::filter_record_batch;
 use async_trait::async_trait;
+use tracing::warn;
 use datafusion::catalog::TableProvider;
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::logical_expr::expr::BinaryExpr;
@@ -93,7 +94,16 @@ impl TableProvider for ParquetTableProvider {
 
         // 2. Apply filter pushdown (best-effort, only simple col op literal)
         let filtered_rb = if !filters.is_empty() && rb.num_rows() > 0 {
-            apply_filters(&rb, filters).unwrap_or(rb)
+            match apply_filters(&rb, filters) {
+                Some(filtered) => filtered,
+                None => {
+                    warn!(
+                        "Filter pushdown failed for {}.{}, falling back to unfiltered scan. Filters: {:?}",
+                        self.db_name, self.table_name, filters
+                    );
+                    rb
+                }
+            }
         } else {
             rb
         };

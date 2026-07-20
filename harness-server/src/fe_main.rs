@@ -31,7 +31,7 @@ use elasticsearch_protocol::{ElasticsearchServer, ElasticsearchServerConfig};
 use influxdb_protocol::{InfluxDBServer, InfluxDBServerConfig};
 use maxcompute_protocol::{McServerConfig, start_mc_server};
 use mongodb_protocol::{MongoDBServer, MongoDBServerConfig};
-use mysql_protocol::auth::default_credentials;
+use mysql_protocol::auth::secure_credentials;
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use mysql_protocol::{MysqlServer, QueryHandler, QueryResult, ServerConfig, auth::AuthPluginType};
 use pg_protocol::{PgServer, PgServerConfig};
@@ -437,7 +437,7 @@ async fn main() -> Result<()> {
     let backup_manager = Arc::new(BackupManager::new(&args.meta_dir, &config.storage.data_dir));
 
     // Create MySQL credentials (shared between auth and DDL handler)
-    let mysql_credentials = default_credentials();
+    let mysql_credentials = secure_credentials();
 
     let query_handler = Arc::new(HarnessQueryHandler::new(
         catalog.clone(),
@@ -478,11 +478,19 @@ async fn main() -> Result<()> {
         "HarnessDB starting MaxCompute server on port {} (may fail silently if port is in use)",
         args.maxcompute_port
     );
+    let mc_access_key_id = std::env::var("HARNESS_MC_ACCESS_KEY_ID").unwrap_or_else(|_| {
+        tracing::warn!("HARNESS_MC_ACCESS_KEY_ID not set — using default 'harness'");
+        "harness".to_string()
+    });
+    let mc_access_key_secret = std::env::var("HARNESS_MC_ACCESS_KEY_SECRET").unwrap_or_else(|_| {
+        tracing::warn!("HARNESS_MC_ACCESS_KEY_SECRET not set — using default (insecure)");
+        "harness-secret".to_string()
+    });
     let mc_config = McServerConfig {
         bind_addr: config.server.bind_addr.clone(),
         port: args.maxcompute_port,
-        access_key_id: "harness".to_string(),
-        access_key_secret: "harness-secret".to_string(),
+        access_key_id: mc_access_key_id,
+        access_key_secret: mc_access_key_secret,
         default_project: "default".to_string(),
         region: None,
     };
@@ -545,8 +553,13 @@ async fn main() -> Result<()> {
     // Redis protocol (RESP2/RESP3)
     let redis_port = if args.enable_all_protocols { args.redis_port } else { args.redis_port };
     if redis_port > 0 {
-        tracing::info!("HarnessDB starting Redis server on port {} (may fail silently if port is in use)", redis_port);
-        let redis_config = RedisServerConfig { port: redis_port, password: None, num_databases: 16 };
+        let redis_password = std::env::var("HARNESS_REDIS_PASSWORD").ok().filter(|p| !p.is_empty());
+        if redis_password.is_some() {
+            tracing::info!("HarnessDB starting Redis server on port {} with password auth", redis_port);
+        } else {
+            tracing::warn!("HARNESS_REDIS_PASSWORD not set — Redis server running without authentication");
+        }
+        let redis_config = RedisServerConfig { port: redis_port, password: redis_password, num_databases: 16 };
         let redis_server = RedisServer::new(redis_config);
         handles.push(tokio::spawn(async move {
             if let Err(e) = redis_server.start().await {

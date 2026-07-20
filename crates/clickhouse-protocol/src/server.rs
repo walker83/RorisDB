@@ -132,8 +132,14 @@ async fn handle_request(
     // Execute query
     let result = handler.handle_query(&database, &query);
 
+    let status = if result.starts_with("Error:") {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::OK
+    };
+
     let response = Response::builder()
-        .status(StatusCode::OK)
+        .status(status)
         .header("Content-Type", "text/tab-separated-values; charset=UTF-8")
         .body(Full::new(Bytes::from(result)))
         .unwrap();
