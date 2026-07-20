@@ -94,10 +94,20 @@ async fn handle_connection(
             let opcode = Opcode::from_u8(frame.header.opcode);
 
             match opcode {
-                Some(Opcode::Startup) | Some(Opcode::Options) => {
-                    info!("Received STARTUP/OPTIONS");
+                Some(Opcode::Startup) => {
+                    info!("Received STARTUP");
                     let response = handler.handle_startup();
                     stream.write_all(&response).await?;
+                    stream.flush().await?;
+                }
+                Some(Opcode::Options) => {
+                    info!("Received OPTIONS");
+                    // Return SUPPORTED with CQL versions and compression options
+                    let supported_body = build_supported_body();
+                    let frame = Frame::new(0x84, frame.header.stream, Opcode::Supported, supported_body);
+                    let mut buf = bytes::BytesMut::new();
+                    frame.encode(&mut buf);
+                    stream.write_all(&buf).await?;
                     stream.flush().await?;
                 }
 
@@ -127,6 +137,32 @@ async fn handle_connection(
             }
         }
     }
+}
+
+/// Build SUPPORTED response body with CQL version and compression options
+fn build_supported_body() -> Vec<u8> {
+    let mut body = Vec::new();
+    // Number of options (2: CQL_VERSION and COMPRESSION)
+    body.extend_from_slice(&2u32.to_be_bytes());
+    // CQL_VERSION
+    let cql_ver_key = b"CQL_VERSION";
+    body.extend_from_slice(&(cql_ver_key.len() as u16).to_be_bytes());
+    body.extend_from_slice(cql_ver_key);
+    // List of supported versions (1 entry)
+    body.extend_from_slice(&1u32.to_be_bytes());
+    let ver = b"3.4.5";
+    body.extend_from_slice(&(ver.len() as u16).to_be_bytes());
+    body.extend_from_slice(ver);
+    // COMPRESSION
+    let comp_key = b"COMPRESSION";
+    body.extend_from_slice(&(comp_key.len() as u16).to_be_bytes());
+    body.extend_from_slice(comp_key);
+    // List of supported compressions (1 entry: none)
+    body.extend_from_slice(&1u32.to_be_bytes());
+    let comp = b"none";
+    body.extend_from_slice(&(comp.len() as u16).to_be_bytes());
+    body.extend_from_slice(comp);
+    body
 }
 
 /// Start Cassandra server with default configuration
