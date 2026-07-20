@@ -495,9 +495,6 @@ impl Connection {
                     .nth(1)
                     .map(|s| {
                         s.trim()
-                            .split_whitespace()
-                            .next()
-                            .unwrap_or("")
                             .trim_end_matches(';')
                             .trim()
                     })
