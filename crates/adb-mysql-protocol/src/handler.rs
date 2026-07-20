@@ -656,7 +656,29 @@ impl AdbMysqlHandler {
                             Expr::Value(Value::DoubleQuotedString(s)) => s.clone(),
                             Expr::Value(Value::Null) => String::new(),
                             Expr::Value(Value::Boolean(b)) => b.to_string(),
-                            _ => format!("{:?}", expr),
+                            Expr::BinaryOp { left, op, right } => {
+                                let l = match left.as_ref() {
+                                    Expr::Value(Value::Number(n, _)) => n.parse::<f64>().unwrap_or(0.0),
+                                    _ => 0.0,
+                                };
+                                let r = match right.as_ref() {
+                                    Expr::Value(Value::Number(n, _)) => n.parse::<f64>().unwrap_or(0.0),
+                                    _ => 0.0,
+                                };
+                                let result = match op {
+                                    sqlparser::ast::BinaryOperator::Plus => l + r,
+                                    sqlparser::ast::BinaryOperator::Minus => l - r,
+                                    sqlparser::ast::BinaryOperator::Multiply => l * r,
+                                    sqlparser::ast::BinaryOperator::Divide => if r != 0.0 { l / r } else { 0.0 },
+                                    _ => 0.0,
+                                };
+                                if result == result.floor() && result.is_finite() && result.abs() <= i64::MAX as f64 {
+                                    format!("{}", result as i64)
+                                } else {
+                                    format!("{}", result)
+                                }
+                            }
+                            _ => String::new(),
                         })
                         .collect();
                     table.insert(values);
