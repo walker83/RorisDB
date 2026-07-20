@@ -123,8 +123,8 @@ impl TnsPacket {
 /// Oracle TNS Connect packet data
 #[derive(Debug, Clone)]
 pub struct ConnectData {
-    pub version: u16,
-    pub compatible: u16,
+    pub version: u32,
+    pub compatible: u32,
     pub service: String,
 }
 
@@ -136,8 +136,8 @@ impl ConnectData {
 
         let mut buf = BytesMut::from(&data[..]);
         // Read 6 x u32 connect options: version, compatible, options, flags, facility, reserved
-        let version = buf.get_u32() as u16;
-        let compatible = buf.get_u32() as u16;
+        let version = buf.get_u32();
+        let compatible = buf.get_u32();
         let _ns_options = buf.get_u32();
         let _flags = buf.get_u32();
         let _facility = buf.get_u32();
