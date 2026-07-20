@@ -273,3 +273,104 @@ fn apply_filters(batch: &RecordBatch, filters: &[Expr]) -> Option<RecordBatch> {
     let mask = combined_mask?;
     filter_record_batch(batch, &mask).ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_array::Int32Array;
+    use arrow_schema::{DataType, Field, Schema};
+    use datafusion::prelude::col;
+
+    fn sample_batch() -> RecordBatch {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("val", DataType::Int32, true),
+        ]));
+        RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(Int32Array::from(vec![1, 2, 3, 4, 5])),
+                Arc::new(Int32Array::from(vec![10, 20, 30, 40, 50])),
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_apply_filters_eq() {
+        let batch = sample_batch();
+        let filters = vec![col("id").eq(datafusion::prelude::lit(3i32))];
+        let result = apply_filters(&batch, &filters).unwrap();
+        assert_eq!(result.num_rows(), 1);
+        let ids = result
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        assert_eq!(ids.value(0), 3);
+    }
+
+    #[test]
+    fn test_apply_filters_gt() {
+        let batch = sample_batch();
+        let filters = vec![col("val").gt(datafusion::prelude::lit(25i32))];
+        let result = apply_filters(&batch, &filters).unwrap();
+        assert_eq!(result.num_rows(), 3); // 30, 40, 50
+        let vals = result
+            .column(1)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        assert_eq!(vals.value(0), 30);
+        assert_eq!(vals.value(1), 40);
+        assert_eq!(vals.value(2), 50);
+    }
+
+    #[test]
+    fn test_apply_filters_lt() {
+        let batch = sample_batch();
+        let filters = vec![col("id").lt(datafusion::prelude::lit(3i32))];
+        let result = apply_filters(&batch, &filters).unwrap();
+        assert_eq!(result.num_rows(), 2); // 1, 2
+    }
+
+    #[test]
+    fn test_apply_filters_and() {
+        let batch = sample_batch();
+        // id > 1 AND val < 40  → rows with id=2,3 (val=20,30)
+        let filters = vec![col("id")
+            .gt(datafusion::prelude::lit(1i32))
+            .and(col("val").lt(datafusion::prelude::lit(40i32)))];
+        let result = apply_filters(&batch, &filters).unwrap();
+        assert_eq!(result.num_rows(), 2);
+    }
+
+    #[test]
+    fn test_apply_filters_no_match() {
+        let batch = sample_batch();
+        let filters = vec![col("id").eq(datafusion::prelude::lit(99i32))];
+        let result = apply_filters(&batch, &filters).unwrap();
+        assert_eq!(result.num_rows(), 0);
+    }
+
+    #[test]
+    fn test_apply_filters_unsupported_expr_returns_none() {
+        let batch = sample_batch();
+        // OR expression is not supported by simple filter pushdown
+        let filters = vec![col("id")
+            .eq(datafusion::prelude::lit(1i32))
+            .or(col("id").eq(datafusion::prelude::lit(2i32)))];
+        let result = apply_filters(&batch, &filters);
+        assert!(result.is_none(), "OR filters should return None (unsupported)");
+    }
+
+    #[test]
+    fn test_apply_filters_literal_op_column() {
+        // Test reversed: 3 = id  (literal op column)
+        let batch = sample_batch();
+        let filters =
+            vec![datafusion::prelude::lit(3i32).eq(col("id"))];
+        let result = apply_filters(&batch, &filters).unwrap();
+        assert_eq!(result.num_rows(), 1);
+    }
+}
