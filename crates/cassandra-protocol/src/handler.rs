@@ -198,7 +198,19 @@ impl DefaultCassandraHandler {
         }
 
         // SELECT COUNT(*)
-        if upper.contains("COUNT(*)") {
+        if upper.contains("COUNT(*)") && upper.contains("FROM ") {
+            let from_idx = upper.find("FROM ").unwrap();
+            let after_from = &cql[from_idx + 5..].trim();
+            let table_part = after_from.split_whitespace().next().unwrap_or("unknown");
+            let (ks, table) = parse_table_name(table_part, keyspace);
+            if let Some(ks_obj) = self.storage.get_keyspace(&ks) {
+                if let Some(cf) = ks_obj.get_table(&table) {
+                    let count = cf.count();
+                    let columns = &["count"];
+                    let rows = vec![vec![count.to_string()]];
+                    return build_rows_result(stream, columns, &rows);
+                }
+            }
             let columns = &["count"];
             let rows = vec![vec!["0".to_string()]];
             return build_rows_result(stream, columns, &rows);
