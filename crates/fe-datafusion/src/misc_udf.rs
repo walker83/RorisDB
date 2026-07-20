@@ -132,7 +132,7 @@ pub fn create_unhex_udf() -> ScalarUDF {
         }
 
         fn return_type(&self, _arg_types: &[DataType]) -> datafusion::error::Result<DataType> {
-            Ok(DataType::Utf8)
+            Ok(DataType::Binary)
         }
 
         fn invoke_with_args(
@@ -147,13 +147,16 @@ pub fn create_unhex_udf() -> ScalarUDF {
                     DataFusionError::Internal("unhex: expected StringArray".to_string())
                 })?;
 
-            let result: Vec<Option<String>> = str_arr
-                .iter()
-                .map(|s| s.and_then(|v| decode_hex(&v)))
-                .collect();
+            let mut builder = arrow_array::builder::BinaryBuilder::new();
+            for s in str_arr.iter() {
+                match s.and_then(|v| decode_hex_bytes(&v)) {
+                    Some(bytes) => builder.append_value(&bytes),
+                    None => builder.append_null(),
+                }
+            }
 
             Ok(ColumnarValue::Array(
-                Arc::new(StringArray::from(result)) as Arc<dyn Array>
+                Arc::new(builder.finish()) as Arc<dyn Array>
             ))
         }
     }
@@ -161,21 +164,19 @@ pub fn create_unhex_udf() -> ScalarUDF {
     ScalarUDF::new_from_impl(UnhexUdf::new())
 }
 
-/// Decode a hex string to a UTF-8 string. Returns None for invalid hex.
-fn decode_hex(s: &str) -> Option<String> {
+/// Decode a hex string to bytes. Returns None for invalid hex.
+fn decode_hex_bytes(s: &str) -> Option<Vec<u8>> {
     if s.len() % 2 != 0 {
         return None;
     }
-    let bytes: Option<Vec<u8>> = s
-        .as_bytes()
+    s.as_bytes()
         .chunks(2)
         .map(|pair| {
             let hi = hex_char_to_u8(pair[0])?;
             let lo = hex_char_to_u8(pair[1])?;
             Some((hi << 4) | lo)
         })
-        .collect();
-    bytes.and_then(|b| String::from_utf8(b).ok())
+        .collect()
 }
 
 fn hex_char_to_u8(c: u8) -> Option<u8> {
