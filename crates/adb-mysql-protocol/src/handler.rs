@@ -823,14 +823,23 @@ impl QueryHandler for AdbMysqlHandler {
 /// Compare two string values, trying numeric first, then lexicographic
 fn compare_string_values(a: &str, b: &str) -> Option<std::cmp::Ordering> {
     if let (Ok(na), Ok(nb)) = (a.parse::<f64>(), b.parse::<f64>()) {
-        return na.partial_cmp(&nb);
+        // Handle NaN explicitly since partial_cmp returns None for NaN
+        return if na.is_nan() && nb.is_nan() {
+            Some(std::cmp::Ordering::Equal)
+        } else if na.is_nan() {
+            Some(std::cmp::Ordering::Less)
+        } else if nb.is_nan() {
+            Some(std::cmp::Ordering::Greater)
+        } else {
+            na.partial_cmp(&nb)
+        };
     }
     Some(a.cmp(b))
 }
 
 /// Format f64 without trailing zeros (e.g., 2.0 → "2", 2.5 → "2.5")
 fn format_f64(v: f64) -> String {
-    if v == v.floor() && v.is_finite() {
+    if v.is_finite() && v == v.floor() && v.abs() <= i64::MAX as f64 {
         format!("{}", v as i64)
     } else {
         format!("{}", v)
