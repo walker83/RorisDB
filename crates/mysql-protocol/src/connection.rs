@@ -842,7 +842,7 @@ impl Connection {
         // Parse statement ID (4 bytes LE)
         let stmt_id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
 
-        if stmt_id == 0 || stmt_id > self.prepared_statements.len() {
+        if self.is_stmt_closed(stmt_id) {
             self.send_general_err(1045, "Unknown prepared statement".to_string())
                 .await?;
             return Ok(());
@@ -1295,10 +1295,18 @@ impl Connection {
         if data.len() >= 4 {
             let stmt_id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
             if stmt_id > 0 && stmt_id <= self.prepared_statements.len() {
+                // Mark as closed by setting empty SQL and invalid param count
                 self.prepared_statements[stmt_id - 1] = (String::new(), 0, 0);
             }
         }
         // COM_STMT_CLOSE has no response
+    }
+
+    fn is_stmt_closed(&self, stmt_id: usize) -> bool {
+        if stmt_id == 0 || stmt_id > self.prepared_statements.len() {
+            return true;
+        }
+        self.prepared_statements[stmt_id - 1].0.is_empty()
     }
 
     // -----------------------------------------------------------------------
