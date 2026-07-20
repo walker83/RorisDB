@@ -124,10 +124,13 @@ impl RespParser {
         let len: i64 = len_str.parse()
             .map_err(|_| RespError::InvalidInteger(len_str.to_string()))?;
 
-        // Null bulk string
-        if len < 0 {
+        // Null bulk string (only -1 is valid per RESP spec)
+        if len == -1 {
             buf.advance(newline_pos + 2);
             return Ok(Some(RespValue::Null));
+        }
+        if len < -1 {
+            return Err(RespError::InvalidData);
         }
 
         let len = len as usize;
