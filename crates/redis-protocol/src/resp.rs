@@ -127,6 +127,10 @@ impl RespParser {
         }
 
         let len = len as usize;
+        // Limit bulk string size to 512MB (Redis default)
+        if len > 512 * 1024 * 1024 {
+            return Err(RespError::InvalidData);
+        }
         let total_len = newline_pos + 2 + len + 2; // header + data + CRLF
 
         if buf.len() < total_len {
@@ -166,6 +170,10 @@ impl RespParser {
         }
 
         let count = count as usize;
+        // Limit array size to 1M elements
+        if count > 1_000_000 {
+            return Err(RespError::InvalidData);
+        }
         buf.advance(newline_pos + 2);
 
         let mut elements = Vec::with_capacity(count);

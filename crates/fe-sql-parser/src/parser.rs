@@ -1415,11 +1415,17 @@ fn parse_create_materialized_view(sql: &str) -> Result<Vec<Statement>, ParseErro
             database,
             name: view_name,
             if_not_exists,
-            query: query
-                .replace("AS ", "")
-                .replace("as ", "")
-                .trim()
-                .to_string(),
+            query: {
+                let q = query.trim();
+                let upper = q.to_uppercase();
+                if let Some(pos) = upper.find(" AS ") {
+                    q[pos + 4..].trim().to_string()
+                } else if upper.starts_with("AS ") {
+                    q[3..].trim().to_string()
+                } else {
+                    q.to_string()
+                }
+            },
             columns,
             refresh,
         },
