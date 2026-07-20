@@ -136,7 +136,7 @@ impl CassandraCommandHandler for DefaultCassandraHandler {
                 parts.get(2).copied().unwrap_or("unknown")
             };
             let (ks, table) = parse_table_name(table_part, keyspace);
-            let ks_obj = self.storage.get_keyspace(&ks);
+            let ks_obj = match self.storage.get_keyspace(&ks) { Some(ks) => ks, None => return build_error_frame(0, 0x2200, &format!("Keyspace {} not found", ks)) };
             ks_obj.create_table(&table);
             return build_void_result(stream);
         }
@@ -215,7 +215,7 @@ impl DefaultCassandraHandler {
                 .unwrap_or("unknown");
 
             let (ks, _table) = parse_table_name(table_part, keyspace);
-            let ks_obj = self.storage.get_keyspace(&ks);
+            let ks_obj = match self.storage.get_keyspace(&ks) { Some(ks) => ks, None => return build_error_frame(0, 0x2200, &format!("Keyspace {} not found", ks)) };
 
             // Return empty rows with some columns based on the query
             let columns = extract_select_columns(cql, upper);

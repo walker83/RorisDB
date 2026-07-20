@@ -92,11 +92,8 @@ impl CassandraStorage {
         storage
     }
 
-    pub fn get_keyspace(&self, name: &str) -> Arc<Keyspace> {
-        self.keyspaces
-            .entry(name.to_string())
-            .or_insert_with(|| Arc::new(Keyspace::new()))
-            .clone()
+    pub fn get_keyspace(&self, name: &str) -> Option<Arc<Keyspace>> {
+        self.keyspaces.get(name).map(|r| r.value().clone())
     }
 
     pub fn list_keyspaces(&self) -> Vec<String> {

@@ -101,7 +101,13 @@ impl Frame {
     pub fn parse(buf: &mut BytesMut) -> Option<Self> {
         let header = FrameHeader::parse(buf)?;
 
+        if header.length < 0 {
+            return None; // Invalid negative length
+        }
         let length = header.length as usize;
+        if length > 16 * 1024 * 1024 {
+            return None; // Max 16MB body
+        }
         // Check if we have the full frame (header + body) before consuming anything
         if buf.len() < FrameHeader::SIZE + length {
             return None;
