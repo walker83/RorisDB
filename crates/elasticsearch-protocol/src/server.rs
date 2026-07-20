@@ -115,8 +115,15 @@ async fn handle_request(
 
     let response_body = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
 
+    // Extract HTTP status from result JSON if available
+    let status_code = result
+        .get("status")
+        .and_then(|v| v.as_u64())
+        .and_then(|c| StatusCode::from_u16(c as u16).ok())
+        .unwrap_or(StatusCode::OK);
+
     let response = Response::builder()
-        .status(StatusCode::OK)
+        .status(status_code)
         .header("Content-Type", "application/json")
         .body(Full::new(Bytes::from(response_body)))
         .unwrap();
