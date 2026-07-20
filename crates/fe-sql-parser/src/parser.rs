@@ -675,10 +675,10 @@ fn convert_insert_set_to_values(sql: &str) -> Result<String, ParseError> {
 /// Split a potentially dot-qualified name into (database, object_name).
 fn split_qualified_name(name: &str) -> (Option<String>, String) {
     let parts: Vec<&str> = name.split('.').collect();
-    if parts.len() == 2 {
-        (Some(parts[0].to_string()), parts[1].to_string())
-    } else {
-        (None, name.to_string())
+    match parts.len() {
+        3 => (Some(parts[1].to_string()), parts[2].to_string()), // catalog.db.table
+        2 => (Some(parts[0].to_string()), parts[1].to_string()), // db.table
+        _ => (None, name.to_string()),
     }
 }
 
