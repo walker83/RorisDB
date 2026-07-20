@@ -68,16 +68,15 @@ pub fn encode_login_ack() -> Vec<u8> {
     let tds_version = [0x05, 0x00, 0x00, 0x00]; // TDS 5.0
     let prog_name = "HarnessDB";
     let prog: Vec<u16> = prog_name.encode_utf16().collect();
+    // 1(interface) + 4(tds_version) + 1(prog_name_len) + prog.len()*2 + 4(version)
     let total_len = 1 + 4 + 1 + prog.len() * 2 + 4;
     buf.extend_from_slice(&(total_len as u16).to_le_bytes());
     buf.push(interface);
     buf.extend_from_slice(&tds_version);
     buf.push(prog.len() as u8);
     for ch in &prog { buf.extend_from_slice(&ch.to_le_bytes()); }
-    // Version: major.minor.build.patch
-    buf.extend_from_slice(&16u32.to_le_bytes()); // major.minor
-    buf.extend_from_slice(&0u16.to_le_bytes());  // build
-    buf.extend_from_slice(&0u16.to_le_bytes());  // patch
+    // Version: major.minor.build.patch (4 bytes total)
+    buf.extend_from_slice(&16u32.to_le_bytes()); // 16.0.0.0
     buf
 }
 

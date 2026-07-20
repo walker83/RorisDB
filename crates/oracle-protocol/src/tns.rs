@@ -84,7 +84,13 @@ impl TnsPacket {
     pub fn parse(buf: &mut BytesMut) -> Option<Self> {
         let header = TnsHeader::parse(buf)?;
 
+        if (header.packet_length as usize) < TnsHeader::SIZE {
+            return None; // Invalid packet length
+        }
         let data_length = header.packet_length as usize - TnsHeader::SIZE;
+        if data_length > 16 * 1024 * 1024 {
+            return None; // Max 16MB
+        }
         if buf.len() < data_length {
             return None;
         }
