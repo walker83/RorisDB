@@ -160,8 +160,11 @@ impl CassandraCommandHandler for DefaultCassandraHandler {
             return build_void_result(stream);
         }
 
-        // UPDATE
+        // UPDATE ks.table SET col = val WHERE key = 'value'
         if upper.starts_with("UPDATE") {
+            if let Some(result) = self.handle_update(keyspace, &upper, cql) {
+                return result;
+            }
             return build_void_result(stream);
         }
 
@@ -323,6 +326,36 @@ impl DefaultCassandraHandler {
         if let Some(eq_pos) = where_clause.find('=') {
             let val = where_clause[eq_pos + 1..].trim().trim_matches('\'').trim();
             cf.delete(val);
+        }
+        Some(build_void_result(0))
+    }
+
+    fn handle_update(&self, keyspace: &str, upper: &str, cql: &str) -> Option<Vec<u8>> {
+        // UPDATE ks.table SET col = val WHERE key = 'value'
+        let table_start = upper.find("UPDATE ")? + 7;
+        let set_pos = upper.find(" SET ")?;
+        let table_part = cql[table_start..set_pos].trim();
+        let (ks, table) = parse_table_name(table_part, keyspace);
+        let ks_obj = self.storage.get_keyspace(&ks)?;
+        let cf = ks_obj.get_table(&table)?;
+
+        let where_pos = upper.find(" WHERE ")?;
+        let set_clause = &cql[set_pos + 5..where_pos].trim();
+        let where_clause = &cql[where_pos + 7..].trim();
+
+        // Parse WHERE key = 'value'
+        if let Some(eq_pos) = where_clause.find('=') {
+            let key = where_clause[eq_pos + 1..].trim().trim_matches('\'').trim();
+            // Get existing row and update
+            if let Some(mut row) = cf.select(Some(key)).into_iter().next() {
+                // Parse SET col = val
+                if let Some(set_eq) = set_clause.find('=') {
+                    let col = set_clause[..set_eq].trim();
+                    let val = set_clause[set_eq + 1..].trim().trim_matches('\'').trim();
+                    row.insert(col.to_string(), val.to_string());
+                    cf.insert(key.to_string(), row);
+                }
+            }
         }
         Some(build_void_result(0))
     }
