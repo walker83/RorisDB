@@ -775,7 +775,10 @@ impl QueryHandler for AdbMysqlHandler {
             Ok(s) => s,
             Err(e) => {
                 warn!("ADB SQL parse error: {} — SQL: {}", e, sql);
-                return QueryResult::ok();
+                return QueryResult::with_rows(
+                    vec![ColumnDef { name: "error".to_string(), col_type: ColumnType::String }],
+                    vec![vec![Some(format!("ERROR: {}", e))]],
+                );
             }
         };
 
