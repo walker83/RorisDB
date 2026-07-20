@@ -161,11 +161,23 @@ impl Database {
 
     fn glob_to_regex(pattern: &str) -> String {
         let mut regex = String::from("^");
-        for ch in pattern.chars() {
+        let mut chars = pattern.chars().peekable();
+        while let Some(ch) = chars.next() {
             match ch {
+                '\\' => {
+                    // Escaped character: \* matches literal *, \? matches literal ?
+                    if let Some(&next) = chars.peek() {
+                        regex.push('\\');
+                        regex.push(next);
+                        chars.next();
+                    } else {
+                        regex.push('\\');
+                        regex.push('\\');
+                    }
+                }
                 '*' => regex.push_str(".*"),
                 '?' => regex.push('.'),
-                '.' | '+' | '(' | ')' | '{' | '}' | '[' | ']' | '^' | '$' | '|' | '\\' => {
+                '.' | '+' | '(' | ')' | '{' | '}' | '[' | ']' | '^' | '$' | '|' => {
                     regex.push('\\');
                     regex.push(ch);
                 }
