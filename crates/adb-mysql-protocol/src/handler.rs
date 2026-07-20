@@ -782,9 +782,7 @@ impl QueryHandler for AdbMysqlHandler {
             }
         };
 
-        let database = self.get_database(conn_id);
-
-        // Check if this is a USE statement — update connection's database
+        // Pre-scan for USE statements to update connection's database
         for stmt in &stmts {
             if let Statement::Use(use_expr) = stmt {
                 let db_name = match use_expr {
@@ -799,6 +797,9 @@ impl QueryHandler for AdbMysqlHandler {
                 }
             }
         }
+
+        // Re-read database after USE pre-scan
+        let database = self.get_database(conn_id);
 
         let mut result = QueryResult::ok();
         for stmt in stmts {
