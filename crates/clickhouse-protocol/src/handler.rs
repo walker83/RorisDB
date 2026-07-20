@@ -1090,8 +1090,12 @@ fn resolve_aliases(select_tokens: &[String], headers: &[String]) -> Vec<String> 
 }
 
 /// Format rows as TSV with headers (used for GROUP BY results).
-fn format_tsv(_headers: &[String], rows: &[Vec<String>]) -> String {
+fn format_tsv(headers: &[String], rows: &[Vec<String>]) -> String {
     let mut result = String::new();
+    if !headers.is_empty() {
+        result.push_str(&headers.join("\t"));
+        result.push('\n');
+    }
     for row in rows {
         result.push_str(&row.join("\t"));
         result.push('\n');
