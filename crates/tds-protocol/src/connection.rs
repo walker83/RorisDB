@@ -64,8 +64,21 @@ pub async fn run_connection(
                 }
             }
             TDS_RPC => {
-                // RPC — simplified: treat as EXEC statement
-                let sql = decode_tds_string(&packet.data);
+                // RPC has different format than LANGUAGE: skip RPC header bytes
+                // TDS RPC format: [procedure_name_len(2)] [procedure_name(UTF-16LE)] [parameters...]
+                // For simplicity, extract SQL from the data portion after the RPC header
+                let sql_data = if packet.data.len() > 2 {
+                    let name_len = u16::from_le_bytes([packet.data[0], packet.data[1]]) as usize;
+                    let header_end = 2 + name_len * 2;
+                    if header_end < packet.data.len() {
+                        &packet.data[header_end..]
+                    } else {
+                        &packet.data
+                    }
+                } else {
+                    &packet.data
+                };
+                let sql = decode_tds_string(sql_data);
                 let result = handler.handle_query(conn_id, &sql);
                 let reply = encode_query_result(&result);
                 let tds_reply = TdsPacket::new(TDS_REPLY, reply);
