@@ -136,15 +136,19 @@ impl Database {
         let pattern = Self::glob_to_regex(pattern);
         let regex = regex::Regex::new(&pattern).ok();
 
+        let now = Instant::now();
+        let expired_keys: Vec<String> = self.data
+            .iter()
+            .filter(|entry| entry.expires_at.is_some_and(|t| now > t))
+            .map(|entry| entry.key().clone())
+            .collect();
+        for key in expired_keys {
+            self.data.remove(&key);
+        }
+
         self.data
             .iter()
             .filter(|entry| {
-                // Check expiration
-                if let Some(expires_at) = entry.expires_at {
-                    if Instant::now() > expires_at {
-                        return false;
-                    }
-                }
                 // Check pattern
                 regex.as_ref().map_or(true, |re| re.is_match(entry.key()))
             })
