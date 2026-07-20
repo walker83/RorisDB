@@ -14,8 +14,8 @@ pub fn encode_done(row_count: u64, status: u16) -> Vec<u8> {
     buf.push(DONE_TOKEN);
     buf.extend_from_slice(&status.to_le_bytes()); // status
     buf.extend_from_slice(&0u16.to_le_bytes()); // curcmd
-    // Row count as 4-byte (TDS 5.0)
-    buf.extend_from_slice(&(row_count as u32).to_le_bytes());
+    // Row count as 4-byte (TDS 5.0), saturate at u32::MAX
+    buf.extend_from_slice(&(row_count.min(u32::MAX as u64) as u32).to_le_bytes());
     buf
 }
 
