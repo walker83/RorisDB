@@ -537,7 +537,13 @@ impl PgConnection {
                         }
                     }
                 } else {
-                    BackendMessage::NoData.encode(&mut self.write_buf);
+                    // Statement not found — return error
+                    create_error_response(
+                        "ERROR",
+                        sqlstate::INVALID_SQL_STATEMENT_NAME,
+                        &format!("prepared statement '{}' does not exist", stmt_name),
+                    )
+                    .encode(&mut self.write_buf);
                 }
             }
             DescribeTarget::Portal => {
