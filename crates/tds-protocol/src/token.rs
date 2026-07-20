@@ -128,19 +128,21 @@ pub fn encode_colmetadata(columns: &[TdsColumnDef]) -> Vec<u8> {
     buf
 }
 
-// Row data encoding (all as strings for simplicity)
+// Row data encoding (UTF-16LE for TDS compliance)
 pub fn encode_row(values: &[Option<String>]) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.push(ROW_TOKEN);
     for val in values {
         match val {
             Some(s) => {
-                let bytes = s.as_bytes();
-                buf.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
-                buf.extend_from_slice(bytes);
+                let utf16: Vec<u16> = s.encode_utf16().collect();
+                buf.extend_from_slice(&(utf16.len() as u16 * 2).to_le_bytes());
+                for ch in &utf16 {
+                    buf.extend_from_slice(&ch.to_le_bytes());
+                }
             }
             None => {
-                buf.extend_from_slice(&0xFFFFu16.to_le_bytes()); // NULL marker
+                buf.extend_from_slice(&(-1i32).to_le_bytes()); // NULL marker (4 bytes)
             }
         }
     }
