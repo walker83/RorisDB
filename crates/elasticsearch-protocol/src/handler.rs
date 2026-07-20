@@ -143,6 +143,9 @@ impl ElasticsearchCommandHandler for DefaultElasticsearchHandler {
 
             // PUT /{index} - Create index
             ("PUT", [index_name]) if path_parts.len() == 1 => {
+                if index_name.starts_with('_') {
+                    return json!({"error": format!("Cannot create system index '{}'", index_name), "status": 400});
+                }
                 self.storage.create_index(index_name);
                 json!({
                     "acknowledged": true,
