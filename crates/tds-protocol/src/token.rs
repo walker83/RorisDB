@@ -23,7 +23,9 @@ pub fn encode_error(number: u32, state: u8, severity: u8, message: &str, server:
     let mut buf = Vec::new();
     buf.push(ERROR_TOKEN);
     let msg_bytes = message.encode_utf16().collect::<Vec<_>>();
-    let total_len = 4 + 1 + 1 + 2 + 2 + 2 + msg_bytes.len() * 2 + 2 + server.encode_utf16().count() * 2;
+    // 4(number) + 1(state) + 1(severity) + 2(msg_len) + msg_bytes*2 + 2(srv_len) + srv*2 + 2(proc_len) + 4(line)
+    let srv: Vec<u16> = server.encode_utf16().collect();
+    let total_len = 4 + 1 + 1 + 2 + msg_bytes.len() * 2 + 2 + srv.len() * 2 + 2 + 4;
     buf.extend_from_slice(&(total_len as u16).to_le_bytes());
     buf.extend_from_slice(&number.to_le_bytes());
     buf.push(state);
