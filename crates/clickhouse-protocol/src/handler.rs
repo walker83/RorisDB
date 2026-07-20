@@ -775,14 +775,13 @@ impl DefaultClickHouseHandler {
         let db_name = resolve_database(&qual_db, database);
         let db = match self.storage.get_database(&db_name) { Some(d) => d, None => return "Error: Database not found".to_string() };
 
-        // If table already exists and IF NOT EXISTS was specified, return OK
+        // If table already exists
         if db.get_table(&table_name).is_some() {
-            // Check if IF NOT EXISTS was specified
-            let has_if_not_exists = table_idx + 1 < tokens.len()
-                && tokens[table_idx + 1].to_uppercase() == "IF";
+            let has_if_not_exists = query.to_uppercase().contains("IF NOT EXISTS");
             if has_if_not_exists {
                 return "OK\n".to_string();
             }
+            return format!("Error: Table '{}' already exists", table_name);
         }
 
         // Find column definitions between ( and )
