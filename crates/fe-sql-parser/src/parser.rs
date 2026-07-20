@@ -561,7 +561,7 @@ fn split_on_comma(s: &str) -> Vec<String> {
             if c == string_char && prev_char != '\\' {
                 in_string = false;
             }
-        } else if c == '\'' || c == '"' {
+        } else if c == '\'' || c == '"' || c == '`' {
             current.push(c);
             in_string = true;
             string_char = c;
