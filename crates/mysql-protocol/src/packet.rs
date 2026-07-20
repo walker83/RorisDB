@@ -1193,18 +1193,22 @@ pub fn text_to_binary(text: Option<&str>, col_type: u8) -> Option<BinaryValue> {
                 let date_parts: Vec<&str> = parts[0].split('-').collect();
                 let time_parts: Vec<&str> = parts[1].split(':').collect();
                 if date_parts.len() == 3 && time_parts.len() >= 3 {
+                    let (sec, micros) = if let Some((s, f)) = time_parts[2].split_once('.') {
+                        let sec: u8 = s.parse().ok()?;
+                        let frac: u32 = f.parse().ok()?;
+                        let micros = frac * 10u32.pow(6 - f.len() as u32);
+                        (sec, micros)
+                    } else {
+                        (time_parts[2].parse().ok()?, 0u32)
+                    };
                     Some(BinaryValue::DateTime {
                         year: date_parts[0].parse().ok()?,
                         month: date_parts[1].parse().ok()?,
                         day: date_parts[2].parse().ok()?,
                         hour: time_parts[0].parse().ok()?,
                         minute: time_parts[1].parse().ok()?,
-                        second: time_parts[2].parse().ok()?,
-                        micros: if time_parts.len() > 3 {
-                            time_parts[3].parse().ok()?
-                        } else {
-                            0
-                        },
+                        second: sec,
+                        micros,
                     })
                 } else {
                     Some(BinaryValue::String(text.as_bytes().to_vec()))
