@@ -1949,6 +1949,7 @@ mod tests {
     use super::*;
     use arrow_array::{Date32Array, Int64Array};
     use arrow_schema::{DataType, Field, Schema};
+    use datafusion::prelude::SessionContext;
 
     #[tokio::test]
     async fn test_date_add_normal() {
