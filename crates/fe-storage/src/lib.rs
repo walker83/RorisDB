@@ -300,9 +300,7 @@ impl ParquetStorage {
             return Ok(());
         }
         let existing = self::read::read_parquet(&path)?;
-        if existing.num_rows() == 0 {
-            return Ok(());
-        }
+        // Don't skip empty tables - schema still needs to be modified
         // Project out the column
         let mut indices: Vec<usize> = (0..existing.num_columns()).collect();
         if col_index >= indices.len() {
