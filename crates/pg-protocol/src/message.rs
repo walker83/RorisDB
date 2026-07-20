@@ -235,7 +235,14 @@ impl FrontendMessage {
         if buf.len() < 4 {
             return Ok(None);
         }
-        let len = (&buf[..4]).get_i32() as usize;
+        let len_i32 = (&buf[..4]).get_i32();
+        if len_i32 < 4 {
+            return Err(PgProtocolError::UnexpectedEof); // Invalid negative or too-small length
+        }
+        let len = len_i32 as usize;
+        if len > 10 * 1024 * 1024 {
+            return Err(PgProtocolError::UnexpectedEof); // Max 10MB startup message
+        }
         if buf.len() < len {
             return Ok(None);
         }
