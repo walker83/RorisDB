@@ -467,7 +467,10 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
             "READ COMMITTED" => "READ COMMITTED",
             "REPEATABLE READ" => "REPEATABLE READ",
             "SERIALIZABLE" => "SERIALIZABLE",
-            _ => "REPEATABLE READ",
+            _ => return Err(ParseError::SyntaxError {
+                position: 0,
+                message: format!("Unknown isolation level: '{}'", level),
+            }),
         };
         return Ok(vec![Statement::SetTransactionIsolation(
             isolation_level.to_string(),
