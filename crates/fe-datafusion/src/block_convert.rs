@@ -480,3 +480,54 @@ fn convert_array_to_vector_by_type(
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_array::{RecordBatch, UInt64Array};
+    use arrow_schema::{DataType, Field, Schema};
+
+    #[test]
+    fn test_uint64_overflow_clamped_to_i64_max() {
+        // Values > i64::MAX should be clamped to i64::MAX, not wrap/panic
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "u",
+            DataType::UInt64,
+            true,
+        )]));
+        let arr = UInt64Array::from(vec![
+            Some(100u64),
+            Some(u64::MAX),
+            Some(i64::MAX as u64),
+            Some(i64::MAX as u64 + 1),
+            None,
+        ]);
+        let rb = RecordBatch::try_new(schema, vec![Arc::new(arr)]).unwrap();
+        let block = record_batch_to_block(&rb).unwrap();
+
+        let col = block.column(0);
+        assert_eq!(col.get(0), Some(100i64));
+        assert_eq!(col.get(1), Some(i64::MAX));
+        assert_eq!(col.get(2), Some(i64::MAX));
+        assert_eq!(col.get(3), Some(i64::MAX));
+        assert_eq!(col.get(4), None);
+    }
+
+    #[test]
+    fn test_uint64_normal_values_pass_through() {
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "u",
+            DataType::UInt64,
+            false,
+        )]));
+        let arr = UInt64Array::from(vec![0u64, 1, 42, 1000]);
+        let rb = RecordBatch::try_new(schema, vec![Arc::new(arr)]).unwrap();
+        let block = record_batch_to_block(&rb).unwrap();
+
+        let col = block.column(0);
+        assert_eq!(col.get(0), Some(0i64));
+        assert_eq!(col.get(1), Some(1i64));
+        assert_eq!(col.get(2), Some(42i64));
+        assert_eq!(col.get(3), Some(1000i64));
+    }
+}

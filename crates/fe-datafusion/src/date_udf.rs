@@ -1943,3 +1943,135 @@ pub fn register_date_udfs(ctx: &mut datafusion::prelude::SessionContext) {
     ctx.register_udf(create_date_add_udf());
     ctx.register_udf(create_date_sub_udf());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_array::{Date32Array, Int64Array};
+    use arrow_schema::{DataType, Field, Schema};
+
+    #[tokio::test]
+    async fn test_date_add_normal() {
+        let ctx = SessionContext::new();
+        ctx.register_udf(create_date_add_udf());
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("d", DataType::Date32, true),
+            Field::new("n", DataType::Int64, true),
+        ]));
+        // 2020-01-01 = days since epoch 18262
+        let dates = Date32Array::from(vec![Some(18262)]);
+        let days = Int64Array::from(vec![Some(10i64)]);
+        let batch =
+            RecordBatch::try_new(schema, vec![Arc::new(dates), Arc::new(days)]).unwrap();
+        ctx.register_batch("t", batch).unwrap();
+
+        let result = ctx
+            .sql("SELECT date_add(d, n) FROM t")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let arr = result[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Date32Array>()
+            .unwrap();
+        assert_eq!(arr.value(0), 18272); // 18262 + 10
+    }
+
+    #[tokio::test]
+    async fn test_date_add_large_value_clamped() {
+        let ctx = SessionContext::new();
+        ctx.register_udf(create_date_add_udf());
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("d", DataType::Date32, true),
+            Field::new("n", DataType::Int64, true),
+        ]));
+        let dates = Date32Array::from(vec![Some(100)]);
+        // Value larger than i32::MAX should be clamped, not wrap
+        let days = Int64Array::from(vec![Some(i64::MAX)]);
+        let batch =
+            RecordBatch::try_new(schema, vec![Arc::new(dates), Arc::new(days)]).unwrap();
+        ctx.register_batch("t", batch).unwrap();
+
+        let result = ctx
+            .sql("SELECT date_add(d, n) FROM t")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let arr = result[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Date32Array>()
+            .unwrap();
+        // Should be 100 + i32::MAX (clamped), not a wrapping panic
+        assert_eq!(arr.value(0), 100 + i32::MAX);
+    }
+
+    #[tokio::test]
+    async fn test_date_sub_large_value_clamped() {
+        let ctx = SessionContext::new();
+        ctx.register_udf(create_date_sub_udf());
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("d", DataType::Date32, true),
+            Field::new("n", DataType::Int64, true),
+        ]));
+        let dates = Date32Array::from(vec![Some(200_000)]);
+        let days = Int64Array::from(vec![Some(i64::MAX)]);
+        let batch =
+            RecordBatch::try_new(schema, vec![Arc::new(dates), Arc::new(days)]).unwrap();
+        ctx.register_batch("t", batch).unwrap();
+
+        let result = ctx
+            .sql("SELECT date_sub(d, n) FROM t")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let arr = result[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Date32Array>()
+            .unwrap();
+        // Should be 200000 - i32::MAX (clamped), not panic
+        assert_eq!(arr.value(0), 200_000 - i32::MAX);
+    }
+
+    #[tokio::test]
+    async fn test_date_add_null_handling() {
+        let ctx = SessionContext::new();
+        ctx.register_udf(create_date_add_udf());
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("d", DataType::Date32, true),
+            Field::new("n", DataType::Int64, true),
+        ]));
+        let dates = Date32Array::from(vec![None::<i32>, Some(100)]);
+        let days = Int64Array::from(vec![Some(10i64), None]);
+        let batch =
+            RecordBatch::try_new(schema, vec![Arc::new(dates), Arc::new(days)]).unwrap();
+        ctx.register_batch("t", batch).unwrap();
+
+        let result = ctx
+            .sql("SELECT date_add(d, n) FROM t")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let arr = result[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Date32Array>()
+            .unwrap();
+        assert!(arr.is_null(0)); // null date → null
+        assert!(arr.is_null(1)); // null days → null
+    }
+}
