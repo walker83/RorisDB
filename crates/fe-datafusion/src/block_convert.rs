@@ -505,12 +505,16 @@ mod tests {
         let rb = RecordBatch::try_new(schema, vec![Arc::new(arr)]).unwrap();
         let block = record_batch_to_block(&rb).unwrap();
 
-        let col = block.column(0);
-        assert_eq!(col.get(0), Some(100i64));
-        assert_eq!(col.get(1), Some(i64::MAX));
-        assert_eq!(col.get(2), Some(i64::MAX));
-        assert_eq!(col.get(3), Some(i64::MAX));
-        assert_eq!(col.get(4), None);
+        let col = block.column(0).unwrap();
+        if let Vector::Int64(v) = col {
+            assert_eq!(v.get(0), Some(100i64));
+            assert_eq!(v.get(1), Some(i64::MAX));
+            assert_eq!(v.get(2), Some(i64::MAX));
+            assert_eq!(v.get(3), Some(i64::MAX));
+            assert_eq!(v.get(4), None);
+        } else {
+            panic!("Expected Int64Vector");
+        }
     }
 
     #[test]
@@ -524,10 +528,14 @@ mod tests {
         let rb = RecordBatch::try_new(schema, vec![Arc::new(arr)]).unwrap();
         let block = record_batch_to_block(&rb).unwrap();
 
-        let col = block.column(0);
-        assert_eq!(col.get(0), Some(0i64));
-        assert_eq!(col.get(1), Some(1i64));
-        assert_eq!(col.get(2), Some(42i64));
-        assert_eq!(col.get(3), Some(1000i64));
+        let col = block.column(0).unwrap();
+        if let Vector::Int64(v) = col {
+            assert_eq!(v.get(0), Some(0i64));
+            assert_eq!(v.get(1), Some(1i64));
+            assert_eq!(v.get(2), Some(42i64));
+            assert_eq!(v.get(3), Some(1000i64));
+        } else {
+            panic!("Expected Int64Vector");
+        }
     }
 }

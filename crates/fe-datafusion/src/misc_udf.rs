@@ -449,9 +449,13 @@ pub fn create_group_concat_udf() -> AggregateUDF {
 
         fn accumulator(
             &self,
-            _acc_args: AccumulatorArgs,
+            acc_args: AccumulatorArgs,
         ) -> datafusion::error::Result<Box<dyn Accumulator>> {
-            Ok(Box::new(GroupConcatAccumulator::new()))
+            if acc_args.is_distinct {
+                Ok(Box::new(GroupConcatAccumulator::new_distinct()))
+            } else {
+                Ok(Box::new(GroupConcatAccumulator::new()))
+            }
         }
 
         fn state_fields(

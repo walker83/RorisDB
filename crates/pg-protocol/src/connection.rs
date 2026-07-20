@@ -427,12 +427,6 @@ impl PgConnection {
                 fields: Vec::new(),
             },
         );
-        if !param_types.is_empty() {
-            BackendMessage::ParameterDescription {
-                type_oids: param_types.to_vec(),
-            }
-            .encode(&mut self.write_buf);
-        }
         BackendMessage::ParseComplete.encode(&mut self.write_buf);
         if let Err(e) = self.flush_write().await {
             error!(
@@ -517,9 +511,9 @@ impl PgConnection {
                         let trimmed = sql.trim().trim_end_matches(';');
                         if trimmed.is_empty() {
                             BackendMessage::NoData.encode(&mut self.write_buf);
-                        } else {
+                        } else if is_row_returning_query(trimmed) {
                             let result = self.handler.handle_query(self.conn_id, trimmed);
-                            if is_row_returning_query(trimmed) && !result.columns.is_empty() {
+                            if !result.columns.is_empty() {
                                 let fields: Vec<FieldDescription> = result
                                     .columns
                                     .iter()
@@ -645,7 +639,7 @@ impl PgConnection {
                     &format!("portal '{}' not found", portal),
                 )
                 .encode(&mut self.write_buf);
-                self.send_ready_for_query().await.ok();
+                self.flush_write().await.ok();
                 return;
             }
         };
@@ -664,7 +658,7 @@ impl PgConnection {
                     &format!("prepared statement '{}' not found", stmt_name),
                 )
                 .encode(&mut self.write_buf);
-                self.send_ready_for_query().await.ok();
+                self.flush_write().await.ok();
                 return;
             }
         };
@@ -866,8 +860,12 @@ fn infer_command_tag(sql: &str, row_count: i64) -> String {
         "DROP DATABASE".to_string()
     } else if upper.starts_with("DROP") {
         "DROP".to_string()
-    } else if upper.starts_with("ALTER") {
+    } else if upper.starts_with("ALTER TABLE") {
         "ALTER TABLE".to_string()
+    } else if upper.starts_with("ALTER DATABASE") {
+        "ALTER DATABASE".to_string()
+    } else if upper.starts_with("ALTER") {
+        "ALTER".to_string()
     } else if upper.starts_with("TRUNCATE") {
         "TRUNCATE TABLE".to_string()
     } else if upper.starts_with("BEGIN") {
@@ -886,7 +884,7 @@ fn infer_command_tag(sql: &str, row_count: i64) -> String {
         || upper.starts_with("DESCRIBE")
         || upper.starts_with("DESC")
     {
-        format!("EXPLAIN {}", row_count)
+        "EXPLAIN".to_string()
     } else {
         format!("OK {}", row_count)
     }

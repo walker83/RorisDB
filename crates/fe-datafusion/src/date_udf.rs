@@ -1821,7 +1821,7 @@ pub fn create_date_add_udf() -> ScalarUDF {
                     (Some(date), Some(n)) => {
                         // Date32 is already days since epoch, so just add
                         let n_clamped = n.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
-                        Some(date + n_clamped)
+                        Some(date.saturating_add(n_clamped))
                     }
                     _ => None,
                 })
@@ -1900,7 +1900,7 @@ pub fn create_date_sub_udf() -> ScalarUDF {
                     (Some(date), Some(n)) => {
                         // Negate the days argument for subtraction
                         let n_clamped = n.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
-                        Some(date - n_clamped)
+                        Some(date.saturating_sub(n_clamped))
                     }
                     _ => None,
                 })
@@ -2010,8 +2010,8 @@ mod tests {
             .as_any()
             .downcast_ref::<Date32Array>()
             .unwrap();
-        // Should be 100 + i32::MAX (clamped), not a wrapping panic
-        assert_eq!(arr.value(0), 100 + i32::MAX);
+        // saturating_add: 100 + i32::MAX overflows i32, saturates to i32::MAX
+        assert_eq!(arr.value(0), i32::MAX);
     }
 
     #[tokio::test]

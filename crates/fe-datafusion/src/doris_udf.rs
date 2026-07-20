@@ -918,3 +918,119 @@ pub fn register_doris_udfs(ctx: &mut datafusion::prelude::SessionContext) {
     // Aggregate functions
     ctx.register_udaf(create_bitmap_count_udf());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_array::{Int64Array, RecordBatch, StringArray};
+    use arrow_schema::{DataType, Field, Schema};
+    use datafusion::prelude::SessionContext;
+
+    #[tokio::test]
+    async fn test_substring_index_count_zero() {
+        let ctx = SessionContext::new();
+        ctx.register_udf(create_substring_index_udf());
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("s", DataType::Utf8, true),
+            Field::new("d", DataType::Utf8, true),
+            Field::new("c", DataType::Int64, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(StringArray::from(vec!["a.b.c"])),
+                Arc::new(StringArray::from(vec!["."])),
+                Arc::new(Int64Array::from(vec![0i64])),
+            ],
+        )
+        .unwrap();
+        ctx.register_batch("t", batch).unwrap();
+
+        let result = ctx
+            .sql("SELECT substring_index(s, d, c) FROM t")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let arr = result[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(arr.value(0), ""); // count=0 returns empty string
+    }
+
+    #[tokio::test]
+    async fn test_substring_index_positive_count() {
+        let ctx = SessionContext::new();
+        ctx.register_udf(create_substring_index_udf());
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("s", DataType::Utf8, true),
+            Field::new("d", DataType::Utf8, true),
+            Field::new("c", DataType::Int64, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(StringArray::from(vec!["a.b.c"])),
+                Arc::new(StringArray::from(vec!["."])),
+                Arc::new(Int64Array::from(vec![2i64])),
+            ],
+        )
+        .unwrap();
+        ctx.register_batch("t", batch).unwrap();
+
+        let result = ctx
+            .sql("SELECT substring_index(s, d, c) FROM t")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let arr = result[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(arr.value(0), "a.b");
+    }
+
+    #[tokio::test]
+    async fn test_substring_index_negative_count() {
+        let ctx = SessionContext::new();
+        ctx.register_udf(create_substring_index_udf());
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("s", DataType::Utf8, true),
+            Field::new("d", DataType::Utf8, true),
+            Field::new("c", DataType::Int64, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(StringArray::from(vec!["a.b.c"])),
+                Arc::new(StringArray::from(vec!["."])),
+                Arc::new(Int64Array::from(vec![-1i64])),
+            ],
+        )
+        .unwrap();
+        ctx.register_batch("t", batch).unwrap();
+
+        let result = ctx
+            .sql("SELECT substring_index(s, d, c) FROM t")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let arr = result[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(arr.value(0), "c");
+    }
+}

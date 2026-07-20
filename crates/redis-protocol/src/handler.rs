@@ -1321,11 +1321,13 @@ impl DefaultRedisHandler {
                 if chunk.len() == 2 {
                     if let (Some(score_str), Some(member)) = (self.get_arg_str(&chunk[0]), self.get_arg_str(&chunk[1])) {
                         if let Ok(score) = score_str.parse::<f64>() {
-                            // Remove old entry if exists
+                            // Check if member already exists
+                            let existed = zset.iter().any(|(_, m)| m == member);
                             zset.retain(|(_, m)| m != member);
-                            // Add new entry
                             zset.insert((OrderedFloat(score), member.to_string()));
-                            added += 1;
+                            if !existed {
+                                added += 1;
+                            }
                         }
                     }
                 }

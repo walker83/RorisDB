@@ -250,19 +250,19 @@ pub fn handle_pg_catalog_query(
     // ======================================================================
     // information_schema queries
     // ======================================================================
-    if upper.contains("INFORMATION_SCHEMA.TABLES") {
+    if upper.starts_with("SELECT") && upper.contains("INFORMATION_SCHEMA.TABLES") {
         return Some(handle_information_schema_tables(catalog, current_db));
     }
 
-    if upper.contains("INFORMATION_SCHEMA.COLUMNS") {
+    if upper.starts_with("SELECT") && upper.contains("INFORMATION_SCHEMA.COLUMNS") {
         return Some(handle_information_schema_columns(catalog, current_db));
     }
 
-    if upper.contains("INFORMATION_SCHEMA.SCHEMATA") {
+    if upper.starts_with("SELECT") && upper.contains("INFORMATION_SCHEMA.SCHEMATA") {
         return Some(handle_information_schema_schemata(catalog));
     }
 
-    if upper.contains("INFORMATION_SCHEMA.VIEWS") {
+    if upper.starts_with("SELECT") && upper.contains("INFORMATION_SCHEMA.VIEWS") {
         return Some(handle_information_schema_views(catalog, current_db));
     }
 
@@ -383,7 +383,7 @@ fn handle_version() -> QueryResult {
             name: "version".to_string(),
             col_type: ColumnType::String,
         }],
-        vec![vec![Some("PostgreSQL 15.0 (HarnessDB 0.3.0)".to_string())]],
+        vec![vec![Some("PostgreSQL 15.0 (HarnessDB 1.3.0)".to_string())]],
     )
 }
 
