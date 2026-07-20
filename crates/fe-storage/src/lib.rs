@@ -439,6 +439,10 @@ mod write {
             return Err(e.into());
         }
         std::fs::rename(&temp_path, path)?;
+        // fsync parent directory for crash safety
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::File::open(parent).and_then(|f| f.sync_all());
+        }
         debug!("Written {} rows to {}", batch.num_rows(), path.display());
         Ok(())
     }
