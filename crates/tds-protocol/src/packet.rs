@@ -33,7 +33,7 @@ pub async fn read_tds_packet(stream: &mut TcpStream) -> io::Result<TdsPacket> {
     stream.read_exact(&mut header).await?;
     let packet_type = header[0];
     let status = header[1];
-    let length = u16::from_be_bytes([header[2], header[3]]) as usize;
+    let length = u16::from_le_bytes([header[2], header[3]]) as usize;
     if length < 8 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid TDS packet length"));
     }
@@ -46,11 +46,15 @@ pub async fn read_tds_packet(stream: &mut TcpStream) -> io::Result<TdsPacket> {
 }
 
 pub async fn write_tds_packet(stream: &mut TcpStream, packet: &TdsPacket) -> io::Result<()> {
-    let length = (packet.data.len() + 8) as u16;
-    let mut buf = BytesMut::with_capacity(length as usize);
+    let total_len = packet.data.len() + 8;
+    if total_len > u16::MAX as usize {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "TDS packet too large"));
+    }
+    let length = total_len as u16;
+    let mut buf = BytesMut::with_capacity(total_len);
     buf.put_u8(packet.packet_type);
     buf.put_u8(packet.status);
-    buf.put_u16(length);
+    buf.put_u16_le(length);
     buf.put_u16(0); // spid
     buf.put_u8(0); // packet number
     buf.put_u8(0); // window
