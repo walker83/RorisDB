@@ -218,7 +218,6 @@ impl DefaultCassandraHandler {
 
         // Generic SELECT from user tables
         if upper.contains("FROM ") {
-            // Try to extract table name
             let from_idx = upper.find("FROM ").unwrap();
             let after_from = &cql[from_idx + 5..].trim();
             let table_part = after_from
@@ -226,12 +225,19 @@ impl DefaultCassandraHandler {
                 .next()
                 .unwrap_or("unknown");
 
-            let (ks, _table) = parse_table_name(table_part, keyspace);
-            let ks_obj = match self.storage.get_keyspace(&ks) { Some(ks) => ks, None => return build_error_frame(0, 0x2200, &format!("Keyspace {} not found", ks)) };
+            let (ks, table) = parse_table_name(table_part, keyspace);
+            let ks_obj = match self.storage.get_keyspace(&ks) { Some(ks) => ks, None => return build_error_frame(stream, 0x2200, &format!("Keyspace '{}' not found", ks)) };
 
-            // Return empty rows with some columns based on the query
+            if let Some(cf) = ks_obj.get_table(&table) {
+                let all_rows = cf.select(None);
+                let columns = extract_select_columns(cql, upper);
+                let string_rows: Vec<Vec<String>> = all_rows.iter().map(|row| {
+                    columns.iter().map(|col| row.get(*col).cloned().unwrap_or_default()).collect()
+                }).collect();
+                return build_rows_result(stream, &columns, &string_rows);
+            }
+
             let columns = extract_select_columns(cql, upper);
-            let _ = ks_obj; // Used to validate keyspace exists
             return build_rows_result(stream, &columns, &[]);
         }
 
