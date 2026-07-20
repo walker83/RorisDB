@@ -497,7 +497,8 @@ impl BackendMessage {
             }
             BackendMessage::RowDescription { fields } => {
                 let mut body = BytesMut::new();
-                body.put_u16(fields.len() as u16);
+                let field_count = fields.len().min(65535) as u16;
+                body.put_u16(field_count);
                 for field in fields {
                     put_cstring(&mut body, &field.name);
                     body.put_i32(field.table_oid);
