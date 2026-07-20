@@ -152,8 +152,11 @@ impl CassandraCommandHandler for DefaultCassandraHandler {
             return build_void_result(stream);
         }
 
-        // INSERT
+        // INSERT INTO ks.table (col1, col2) VALUES (val1, val2)
         if upper.starts_with("INSERT") {
+            if let Some(result) = self.handle_insert(keyspace, &upper, cql) {
+                return result;
+            }
             return build_void_result(stream);
         }
 
@@ -264,6 +267,42 @@ impl DefaultCassandraHandler {
         // DESCRIBE TABLE
         let columns = &["column_name", "type"];
         return build_rows_result(stream, columns, &[]);
+    }
+
+    fn handle_insert(&self, keyspace: &str, upper: &str, cql: &str) -> Option<Vec<u8>> {
+        // INSERT INTO ks.table (col1, col2) VALUES (val1, val2)
+        let into_pos = upper.find("INTO ")?;
+        let after_into = &cql[into_pos + 5..].trim();
+        let paren_pos = after_into.find('(')?;
+        let table_part = after_into[..paren_pos].trim();
+        let (ks, table) = parse_table_name(table_part, keyspace);
+        let ks_obj = self.storage.get_keyspace(&ks)?;
+        let cf = ks_obj.get_table(&table)?;
+
+        // Parse column names
+        let cols_end = after_into.find(')')?;
+        let cols_str = &after_into[1..cols_end];
+        let columns: Vec<&str> = cols_str.split(',').map(|s| s.trim()).collect();
+
+        // Parse VALUES
+        let values_start = after_into.find("VALUES")?;
+        let after_values = &after_into[values_start + 6..].trim();
+        let vals_start = after_values.find('(')?;
+        let vals_end = after_values.find(')')?;
+        let vals_str = &after_values[vals_start + 1..vals_end];
+        let values: Vec<&str> = vals_str.split(',').map(|s| s.trim().trim_matches('\'')).collect();
+
+        // Build row and insert
+        let mut row = std::collections::HashMap::new();
+        for (i, col) in columns.iter().enumerate() {
+            if let Some(val) = values.get(i) {
+                row.insert(col.to_string(), val.to_string());
+            }
+        }
+        // Use first column as key (simplified)
+        let key = values.first()?.to_string();
+        cf.insert(key, row);
+        Some(build_void_result(0))
     }
 }
 
