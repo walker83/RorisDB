@@ -44,16 +44,16 @@ pub struct TnsHeader {
 impl TnsHeader {
     pub const SIZE: usize = 8;
 
-    pub fn parse(buf: &mut BytesMut) -> Option<Self> {
+    pub fn parse(buf: &[u8]) -> Option<Self> {
         if buf.len() < Self::SIZE {
             return None;
         }
 
-        let packet_length = buf.get_u16();
-        let header_checksum = buf.get_u16();
-        let packet_type = TnsPacketType::from_u8(buf.get_u8())?;
-        let flags = buf.get_u8();
-        let header_checksum2 = buf.get_u16();
+        let packet_length = u16::from_be_bytes([buf[0], buf[1]]);
+        let header_checksum = u16::from_be_bytes([buf[2], buf[3]]);
+        let packet_type = TnsPacketType::from_u8(buf[4])?;
+        let flags = buf[5];
+        let header_checksum2 = u16::from_be_bytes([buf[6], buf[7]]);
 
         Some(Self {
             packet_length,
@@ -82,19 +82,24 @@ pub struct TnsPacket {
 
 impl TnsPacket {
     pub fn parse(buf: &mut BytesMut) -> Option<Self> {
+        if buf.len() < TnsHeader::SIZE {
+            return None;
+        }
         let header = TnsHeader::parse(buf)?;
 
         if (header.packet_length as usize) < TnsHeader::SIZE {
-            return None; // Invalid packet length
-        }
-        let data_length = header.packet_length as usize - TnsHeader::SIZE;
-        if data_length > 16 * 1024 * 1024 {
-            return None; // Max 16MB
-        }
-        if buf.len() < data_length {
             return None;
         }
+        let total_length = header.packet_length as usize;
+        let data_length = total_length - TnsHeader::SIZE;
+        if total_length > 16 * 1024 * 1024 {
+            return None;
+        }
+        if buf.len() < total_length {
+            return None; // Need more data, header bytes stay in buf
+        }
 
+        buf.advance(TnsHeader::SIZE); // Now safe to consume header
         let data = buf.split_to(data_length).to_vec();
 
         Some(Self { header, data })
