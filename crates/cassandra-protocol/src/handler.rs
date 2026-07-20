@@ -165,8 +165,11 @@ impl CassandraCommandHandler for DefaultCassandraHandler {
             return build_void_result(stream);
         }
 
-        // DELETE
+        // DELETE FROM ks.table WHERE key = 'value'
         if upper.starts_with("DELETE") {
+            if let Some(result) = self.handle_delete(keyspace, &upper, cql) {
+                return result;
+            }
             return build_void_result(stream);
         }
 
@@ -302,6 +305,25 @@ impl DefaultCassandraHandler {
         // Use first column as key (simplified)
         let key = values.first()?.to_string();
         cf.insert(key, row);
+        Some(build_void_result(0))
+    }
+
+    fn handle_delete(&self, keyspace: &str, upper: &str, cql: &str) -> Option<Vec<u8>> {
+        // DELETE FROM ks.table WHERE key = 'value'
+        let from_pos = upper.find("FROM ")?;
+        let after_from = &cql[from_pos + 5..].trim();
+        let where_pos = after_from.to_uppercase().find(" WHERE ")?;
+        let table_part = after_from[..where_pos].trim();
+        let (ks, table) = parse_table_name(table_part, keyspace);
+        let ks_obj = self.storage.get_keyspace(&ks)?;
+        let cf = ks_obj.get_table(&table)?;
+
+        // Parse WHERE key = 'value'
+        let where_clause = &after_from[where_pos + 7..].trim();
+        if let Some(eq_pos) = where_clause.find('=') {
+            let val = where_clause[eq_pos + 1..].trim().trim_matches('\'').trim();
+            cf.delete(val);
+        }
         Some(build_void_result(0))
     }
 }
