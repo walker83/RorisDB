@@ -3073,7 +3073,7 @@ fn convert_binary_op(op: sqlparser::ast::BinaryOperator) -> Result<BinaryOp, Par
 fn parse_create_user(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let sql = sql.trim();
 
-    let _if_not_exists = sql.to_uppercase().contains("IF NOT EXISTS");
+    let if_not_exists = sql.to_uppercase().contains("IF NOT EXISTS");
 
     let after_create = strip_prefix_ci(sql, "CREATE USER")
         .ok_or_else(|| ParseError::SyntaxError {
@@ -3132,6 +3132,7 @@ fn parse_create_user(sql: &str) -> Result<Vec<Statement>, ParseError> {
         password,
         identified_by_password,
         roles: vec![],
+        if_not_exists,
     })])
 }
 

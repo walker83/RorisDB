@@ -603,6 +603,7 @@ pub struct CreateUserStmt {
     pub password: Option<String>,
     pub identified_by_password: bool,
     pub roles: Vec<String>,
+    pub if_not_exists: bool,
 }
 
 #[derive(Debug, Clone)]
