@@ -98,7 +98,7 @@ impl DefaultOracleHandler {
             }
         }
 
-        if upper.starts_with("SHOW") && upper.contains("USER") {
+        if upper == "SHOW USER" || upper == "SHOW USER;" {
             return format!("USER is \"{}\"", schema);
         }
 
