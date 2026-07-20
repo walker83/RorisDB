@@ -187,6 +187,10 @@ impl Collection {
                     (Bson::Int32(a), Bson::Int64(b)) => Bson::Int64(*a as i64 + b),
                     (Bson::Int64(a), Bson::Int32(b)) => Bson::Int64(a + *b as i64),
                     (Bson::Double(a), Bson::Double(b)) => Bson::Double(a + b),
+                    (Bson::Int32(a), Bson::Double(b)) => Bson::Double(*a as f64 + b),
+                    (Bson::Int64(a), Bson::Double(b)) => Bson::Double(*a as f64 + b),
+                    (Bson::Double(a), Bson::Int32(b)) => Bson::Double(a + *b as f64),
+                    (Bson::Double(a), Bson::Int64(b)) => Bson::Double(a + *b as f64),
                     _ => current,
                 };
                 target.insert(key, new_value);
