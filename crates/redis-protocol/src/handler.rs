@@ -405,7 +405,14 @@ impl DefaultRedisHandler {
 
         if let Some(db) = self.storage.get_db(db_index) {
             if let Some(val) = db.get(&old_key) {
-                db.set(new_key.to_string(), val, None);
+                // Get TTL before deleting
+                let ttl_secs = db.ttl(&old_key);
+                let ttl = if ttl_secs > 0 {
+                    Some(std::time::Duration::from_secs(ttl_secs as u64))
+                } else {
+                    None
+                };
+                db.set(new_key.to_string(), val, ttl);
                 db.del(&old_key);
                 RespEncoder::ok()
             } else {
