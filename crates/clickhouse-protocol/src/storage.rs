@@ -27,12 +27,15 @@ impl Table {
     }
 
     pub fn insert_row(&mut self, values: Vec<String>) {
-        for (i, value) in values.into_iter().enumerate() {
-            if i < self.column_order.len() {
-                let col_name = &self.column_order[i];
-                if let Some(column) = self.columns.get_mut(col_name) {
-                    column.push(value);
-                }
+        let num_cols = self.column_order.len();
+        for (i, col_name) in self.column_order.iter().enumerate() {
+            let value = if i < values.len() {
+                values[i].clone()
+            } else {
+                String::new() // Pad missing columns with empty string
+            };
+            if let Some(column) = self.columns.get_mut(col_name) {
+                column.push(value);
             }
         }
     }
