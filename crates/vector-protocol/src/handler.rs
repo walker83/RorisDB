@@ -17,7 +17,9 @@ impl VectorHandler {
         match (method, path) {
             ("POST", "/collections") => self.create_collection(body),
             ("GET", "/collections") => self.list_collections(),
+            ("DELETE", "/collections") => self.delete_collection(body),
             ("POST", "/vectors") => self.insert_vector(body),
+            ("DELETE", "/vectors") => self.delete_vector(body),
             ("POST", "/search") => self.search_vectors(body),
             ("GET", "/collections/count") => self.count_vectors(),
             _ => json!({"error": "Unknown endpoint"}).to_string(),
@@ -40,6 +42,19 @@ impl VectorHandler {
         json!({"collections": collections}).to_string()
     }
 
+    fn delete_collection(&self, body: &str) -> String {
+        if let Ok(req) = serde_json::from_str::<Value>(body) {
+            let name = req["name"].as_str().unwrap_or("default");
+            if self.storage.drop_collection(name) {
+                json!({"status": "deleted", "name": name}).to_string()
+            } else {
+                json!({"error": "Collection not found"}).to_string()
+            }
+        } else {
+            json!({"error": "Invalid JSON"}).to_string()
+        }
+    }
+
     fn insert_vector(&self, body: &str) -> String {
         if let Ok(req) = serde_json::from_str::<Value>(body) {
             let collection = req["collection"].as_str().unwrap_or("default");
@@ -55,6 +70,25 @@ impl VectorHandler {
             if let Some(coll) = self.storage.get_collection(collection) {
                 coll.insert(id, vector, metadata);
                 json!({"status": "inserted", "id": id}).to_string()
+            } else {
+                json!({"error": "Collection not found"}).to_string()
+            }
+        } else {
+            json!({"error": "Invalid JSON"}).to_string()
+        }
+    }
+
+    fn delete_vector(&self, body: &str) -> String {
+        if let Ok(req) = serde_json::from_str::<Value>(body) {
+            let collection = req["collection"].as_str().unwrap_or("default");
+            let id = req["id"].as_str().unwrap_or("unknown");
+
+            if let Some(coll) = self.storage.get_collection(collection) {
+                if coll.delete(id) {
+                    json!({"status": "deleted", "id": id}).to_string()
+                } else {
+                    json!({"error": "Vector not found"}).to_string()
+                }
             } else {
                 json!({"error": "Collection not found"}).to_string()
             }

@@ -66,6 +66,10 @@ impl Keyspace {
     pub fn list_tables(&self) -> Vec<String> {
         self.tables.iter().map(|entry| entry.key().clone()).collect()
     }
+
+    pub fn drop_table(&self, name: &str) -> bool {
+        self.tables.remove(name).is_some()
+    }
 }
 
 impl Default for Keyspace {
@@ -102,6 +106,10 @@ impl CassandraStorage {
 
     pub fn create_keyspace(&self, name: &str) {
         self.keyspaces.entry(name.to_string()).or_insert_with(|| Arc::new(Keyspace::new()));
+    }
+
+    pub fn drop_keyspace(&self, name: &str) -> bool {
+        self.keyspaces.remove(name).is_some()
     }
 }
 

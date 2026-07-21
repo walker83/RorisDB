@@ -143,12 +143,28 @@ impl CassandraCommandHandler for DefaultCassandraHandler {
 
         // DROP TABLE
         if upper.starts_with("DROP TABLE") {
-            // Simplified: just return VOID
+            let parts: Vec<&str> = cql_trimmed.split_whitespace().collect();
+            let table_part = if upper.contains("IF EXISTS") {
+                parts.get(4).copied().unwrap_or("unknown")
+            } else {
+                parts.get(2).copied().unwrap_or("unknown")
+            };
+            let (ks, table) = parse_table_name(table_part, keyspace);
+            if let Some(ks_obj) = self.storage.get_keyspace(&ks) {
+                ks_obj.drop_table(&table);
+            }
             return build_void_result(stream);
         }
 
         // DROP KEYSPACE
         if upper.starts_with("DROP KEYSPACE") {
+            let parts: Vec<&str> = cql_trimmed.split_whitespace().collect();
+            let ks_name = if upper.contains("IF EXISTS") {
+                parts.get(4).copied().unwrap_or("unknown")
+            } else {
+                parts.get(2).copied().unwrap_or("unknown")
+            };
+            self.storage.drop_keyspace(ks_name);
             return build_void_result(stream);
         }
 

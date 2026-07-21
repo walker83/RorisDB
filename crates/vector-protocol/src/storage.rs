@@ -33,6 +33,10 @@ impl VectorStorage {
     pub fn list_collections(&self) -> Vec<String> {
         self.collections.iter().map(|c| c.key().clone()).collect()
     }
+
+    pub fn drop_collection(&self, name: &str) -> bool {
+        self.collections.remove(name).is_some()
+    }
 }
 
 impl VectorCollection {
@@ -46,6 +50,10 @@ impl VectorCollection {
     pub fn insert(&self, id: &str, vector: Vec<f32>, metadata: String) {
         self.vectors.insert(id.to_string(), vector);
         self.metadata.insert(id.to_string(), metadata);
+    }
+
+    pub fn delete(&self, id: &str) -> bool {
+        self.vectors.remove(id).is_some() && self.metadata.remove(id).is_some()
     }
 
     pub fn search(&self, query_vector: &[f32], top_k: usize) -> Vec<(String, f32, String)> {
