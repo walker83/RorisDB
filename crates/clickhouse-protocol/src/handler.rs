@@ -757,7 +757,10 @@ impl DefaultClickHouseHandler {
         let tokens = tokenize_sql(query);
 
         // Find TABLE keyword
-        let table_idx = tokens.iter().position(|t| t.to_uppercase() == "TABLE").unwrap();
+        let table_idx = match tokens.iter().position(|t| t.to_uppercase() == "TABLE") {
+            Some(idx) => idx,
+            None => return "Error: TABLE keyword not found in query".to_string(),
+        };
 
         // Check IF NOT EXISTS
         let mut name_idx = table_idx + 1;
@@ -786,7 +789,10 @@ impl DefaultClickHouseHandler {
 
         // Find column definitions between ( and )
         // Reconstruct from the original query after table name
-        let after_table = &query[query.to_uppercase().find("TABLE").unwrap() + 5..];
+        let after_table = match query.to_uppercase().find("TABLE") {
+            Some(pos) => &query[pos + 5..],
+            None => return "Error: TABLE keyword not found".to_string(),
+        };
         let after_table_upper = after_table.to_uppercase();
         let after_table = if after_table_upper.trim_start().starts_with("IF") {
             // Skip past IF NOT EXISTS
@@ -833,10 +839,10 @@ impl DefaultClickHouseHandler {
         let tokens = tokenize_sql(query);
 
         // Find DATABASE keyword
-        let db_idx = tokens
-            .iter()
-            .position(|t| t.to_uppercase() == "DATABASE")
-            .unwrap();
+        let db_idx = match tokens.iter().position(|t| t.to_uppercase() == "DATABASE") {
+            Some(idx) => idx,
+            None => return "Error: DATABASE keyword not found in query".to_string(),
+        };
 
         let mut name_idx = db_idx + 1;
         if name_idx < tokens.len() && tokens[name_idx].to_uppercase() == "IF" {
@@ -858,10 +864,10 @@ impl DefaultClickHouseHandler {
         // DROP DATABASE
         if upper.contains("DATABASE") {
             let tokens = tokenize_sql(query);
-            let db_idx = tokens
-                .iter()
-                .position(|t| t.to_uppercase() == "DATABASE")
-                .unwrap();
+            let db_idx = match tokens.iter().position(|t| t.to_uppercase() == "DATABASE") {
+                Some(idx) => idx,
+                None => return "Error: DATABASE keyword not found".to_string(),
+            };
             let mut name_idx = db_idx + 1;
             if name_idx < tokens.len() && tokens[name_idx].to_uppercase() == "IF" {
                 name_idx += 2; // skip IF EXISTS
@@ -877,10 +883,10 @@ impl DefaultClickHouseHandler {
             }
         } else if upper.contains("TABLE") {
             let tokens = tokenize_sql(query);
-            let table_idx = tokens
-                .iter()
-                .position(|t| t.to_uppercase() == "TABLE")
-                .unwrap();
+            let table_idx = match tokens.iter().position(|t| t.to_uppercase() == "TABLE") {
+                Some(idx) => idx,
+                None => return "Error: TABLE keyword not found".to_string(),
+            };
             let mut name_idx = table_idx + 1;
             if name_idx < tokens.len() && tokens[name_idx].to_uppercase() == "IF" {
                 name_idx += 3; // skip IF EXISTS

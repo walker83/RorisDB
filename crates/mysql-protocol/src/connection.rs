@@ -382,27 +382,34 @@ impl Connection {
                     self.send_ok(0, 0).await?;
                 }
                 command::COM_FIELD_LIST => {
-                    // Parse table name from data
-                    let table_name = String::from_utf8_lossy(data).trim_end_matches('\0').to_string();
+                    // Parse table name from data (format: table_name\0[field_name\0])
+                    let raw_name = String::from_utf8_lossy(data).trim_end_matches('\0').to_string();
+                    let table_name = raw_name.split('\0').next().unwrap_or(&raw_name);
                     debug!("COM_FIELD_LIST: {}", table_name);
-                    // Try to get columns from handler
-                    let result = self.handler.handle_query(
-                        self.conn_id,
-                        &format!("SELECT * FROM {} LIMIT 0", table_name),
-                    );
-                    for col in &result.columns {
-                        let col_def = packet::Column::new(&col.name, col.col_type as u8);
-                        self.write_all(&col_def.encode(self.seq_id)).await?;
+                    // Validate: reject empty or obviously malicious table names
+                    if table_name.is_empty() {
+                        self.send_general_err(1045, "Empty table name in COM_FIELD_LIST".to_string()).await?;
+                    } else {
+                        // Use backtick quoting and escape internal backticks to prevent SQL injection
+                        let safe_table = table_name.replace('`', "``");
+                        let result = self.handler.handle_query(
+                            self.conn_id,
+                            &format!("SELECT * FROM `{}` LIMIT 0", safe_table),
+                        );
+                        for col in &result.columns {
+                            let col_def = packet::Column::new(&col.name, col.col_type as u8);
+                            self.write_all(&col_def.encode(self.seq_id)).await?;
+                            self.seq_id = self.seq_id.wrapping_add(1);
+                        }
+                        // Send EOF
+                        self.write_all(&packet::make_eof_packet(
+                            self.seq_id,
+                            0,
+                            packet::SERVER_STATUS_AUTOCOMMIT,
+                        ))
+                        .await?;
                         self.seq_id = self.seq_id.wrapping_add(1);
                     }
-                    // Send EOF
-                    self.write_all(&packet::make_eof_packet(
-                        self.seq_id,
-                        0,
-                        packet::SERVER_STATUS_AUTOCOMMIT,
-                    ))
-                    .await?;
-                    self.seq_id = self.seq_id.wrapping_add(1);
                 }
                 command::COM_STMT_PREPARE => {
                     let sql = String::from_utf8_lossy(data).to_string();

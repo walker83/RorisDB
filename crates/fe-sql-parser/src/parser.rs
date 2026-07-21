@@ -1854,10 +1854,30 @@ fn extract_identifier(s: &str) -> Option<(&str, &str)> {
     if s.starts_with('"') || s.starts_with('\'') || s.starts_with('`') {
         let quote = s.chars().next().unwrap_or('"');
         let rest = &s[1..];
-        let end = rest.find(quote).unwrap_or(0);
-        let identifier = &rest[..end];
-        let remaining = &rest[end + 1..];
-        Some((identifier, remaining))
+        // Find closing quote, handling escaped quotes (e.g., `foo``bar`)
+        let mut end = 0;
+        let mut chars = rest.char_indices();
+        while let Some((i, c)) = chars.next() {
+            if c == quote {
+                // Check if it's an escaped quote (double quote)
+                if rest[i..].starts_with(&format!("{}{}", quote, quote)) {
+                    end = i + 2; // Skip both quotes
+                    chars.next(); // Skip next char
+                } else {
+                    end = i;
+                    break;
+                }
+            }
+        }
+        // If we didn't find a closing quote, return None (malformed input)
+        if rest[end..].starts_with(quote) {
+            let identifier = &rest[..end];
+            let remaining = &rest[end + 1..];
+            Some((identifier, remaining))
+        } else {
+            // Unclosed quote - treat as malformed
+            None
+        }
     } else {
         let end = s
             .find(|c: char| !c.is_alphanumeric() && c != '_')

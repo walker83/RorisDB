@@ -69,10 +69,14 @@ pub async fn run_connection(
                 // For simplicity, extract SQL from the data portion after the RPC header
                 let sql_data = if packet.data.len() > 2 {
                     let name_len = u16::from_le_bytes([packet.data[0], packet.data[1]]) as usize;
-                    let header_end = 2 + name_len * 2;
+                    // Prevent integer overflow: use checked arithmetic
+                    let header_end = name_len.checked_mul(2)
+                        .and_then(|bytes| 2usize.checked_add(bytes))
+                        .unwrap_or(usize::MAX);
                     if header_end < packet.data.len() {
                         &packet.data[header_end..]
                     } else {
+                        // Header extends beyond packet - use entire data as fallback
                         &packet.data
                     }
                 } else {

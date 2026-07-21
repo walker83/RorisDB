@@ -307,7 +307,7 @@ impl TunnelSessionManager {
         table: &str,
     ) -> Result<TunnelSchema, String> {
         handler.set_database(conn_id, project);
-        let result = handler.handle_query(conn_id, &format!("DESCRIBE `{}`", table));
+        let result = handler.handle_query(conn_id, &format!("DESCRIBE `{}`", table.replace('`', "``")));
 
         if result.columns.len() < 2 {
             return Err(format!(
@@ -378,7 +378,7 @@ impl TunnelSessionManager {
 
         // Fetch all data
         handler.set_database(conn_id, project);
-        let result = handler.handle_query(conn_id, &format!("SELECT * FROM `{}`", table));
+        let result = handler.handle_query(conn_id, &format!("SELECT * FROM `{}`", table.replace('`', "``")));
 
         // Check for error
         if !result.columns.is_empty()

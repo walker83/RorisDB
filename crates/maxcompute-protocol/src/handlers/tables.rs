@@ -163,7 +163,7 @@ pub async fn get_table(
     let conn_id = state.next_conn_id();
     let table_name = table.clone();
     let describe_result = tokio::task::spawn_blocking(move || {
-        handler.handle_query(conn_id, &format!("DESCRIBE {}", table_name))
+        handler.handle_query(conn_id, &format!("DESCRIBE `{}`", table_name.replace('`', "``")))
     })
     .await
     .unwrap_or_else(|join_err| {
@@ -254,7 +254,7 @@ pub async fn delete_table(
     let conn_id = state.next_conn_id();
     let table_name = table.clone();
     let _result = tokio::task::spawn_blocking(move || {
-        handler.handle_query(conn_id, &format!("DROP TABLE IF EXISTS {}", table_name))
+        handler.handle_query(conn_id, &format!("DROP TABLE IF EXISTS `{}`", table_name.replace('`', "``")))
     })
     .await
     .unwrap_or_else(|join_err| {

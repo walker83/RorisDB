@@ -92,19 +92,22 @@ impl ElasticsearchCommandHandler for DefaultElasticsearchHandler {
                 let indices = self.storage.list_indices();
                 let result: Vec<serde_json::Value> = indices
                     .iter()
-                    .map(|name| {
-                        let index = self.storage.get_index(&name).unwrap();
-                        json!({
-                            "health": "green",
-                            "status": "open",
-                            "index": name,
-                            "uuid": "harness-uuid",
-                            "pri": "1",
-                            "rep": "0",
-                            "docs.count": index.count().to_string(),
-                            "docs.deleted": "0",
-                            "store.size": "0b",
-                            "pri.store.size": "0b"
+                    .filter_map(|name| {
+                        // Use filter_map instead of unwrap to handle race conditions
+                        // where an index might be deleted between list_indices() and get_index()
+                        self.storage.get_index(&name).map(|index| {
+                            json!({
+                                "health": "green",
+                                "status": "open",
+                                "index": name,
+                                "uuid": "harness-uuid",
+                                "pri": "1",
+                                "rep": "0",
+                                "docs.count": index.count().to_string(),
+                                "docs.deleted": "0",
+                                "store.size": "0b",
+                                "pri.store.size": "0b"
+                            })
                         })
                     })
                     .collect();
