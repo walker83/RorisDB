@@ -646,6 +646,7 @@ impl PgConnection {
                 )
                 .encode(&mut self.write_buf);
                 self.flush_write().await.ok();
+                self.send_ready_for_query().await.ok();
                 return;
             }
         };
@@ -665,6 +666,7 @@ impl PgConnection {
                 )
                 .encode(&mut self.write_buf);
                 self.flush_write().await.ok();
+                self.send_ready_for_query().await.ok();
                 return;
             }
         };
@@ -1850,7 +1852,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_describe_nonexistent_statement_returns_nodata() {
+    async fn test_describe_nonexistent_statement_returns_error() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -1871,15 +1873,15 @@ mod tests {
 
         startup_and_auth(&mut reader, &mut writer, "user", "db").await;
 
-        // Describe a statement that was never parsed
+        // Describe a statement that was never parsed -> should return ErrorResponse
         writer
             .write_all(&build_describe_message(b'S', "nonexistent_stmt"))
             .await
             .unwrap();
         let (msg_type, _body) = read_pg_message(&mut reader).await;
         assert_eq!(
-            msg_type, b'n',
-            "expected NoData for nonexistent statement, got 0x{:02x}",
+            msg_type, b'E',
+            "expected ErrorResponse for nonexistent statement, got 0x{:02x}",
             msg_type
         );
 
