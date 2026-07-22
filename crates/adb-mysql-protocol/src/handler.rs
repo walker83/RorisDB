@@ -5,18 +5,39 @@ use crate::storage::{AdbMysqlStorage, ColumnDef as StorageColumnDef, ColumnType 
 use dashmap::DashMap;
 use mysql_protocol::server::{ColumnDef, ColumnType, QueryHandler, QueryResult};
 use sqlparser::ast::{
-    Delete, Expr, FromTable, GroupByExpr, Insert, OrderByExpr, Query, Select,
-    SelectItem, SetExpr, Statement, TableFactor, TableWithJoins, Use, Value, Values,
-    AssignmentTarget,
+    Delete, Expr, FromTable, FunctionArg, FunctionArgExpr, FunctionArguments, GroupByExpr,
+    Insert, OrderByExpr, Query, Select, SelectItem, SetExpr, Statement, TableFactor,
+    TableWithJoins, Use, Value, Values, AssignmentTarget,
 };
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
-/// Which aggregation function to apply
+/// Which aggregation function to apply.
+///
+/// Variants other than `CountStar` carry the index of the column they
+/// aggregate over (resolved against `table_columns` at projection time).
 enum AggFunc {
     CountStar,
+    /// COUNT(col): counts non-NULL (non-empty) values of the column.
+    Count(usize),
+    Sum(usize),
+    Avg(usize),
+    Min(usize),
+    Max(usize),
+}
+
+impl AggFunc {
+    /// The column index the aggregate operates on, or `None` for COUNT(*).
+    fn col_index(&self) -> Option<usize> {
+        match self {
+            AggFunc::CountStar => None,
+            AggFunc::Count(i) | AggFunc::Sum(i) | AggFunc::Avg(i) | AggFunc::Min(i) | AggFunc::Max(i) => {
+                Some(*i)
+            }
+        }
+    }
 }
 
 /// Describes what each output column should contain
@@ -235,8 +256,9 @@ impl AdbMysqlHandler {
             let mut row = vec![];
             for col in &output_cols {
                 match col {
-                    OutputCol::Aggregate(AggFunc::CountStar) => {
-                        row.push(Some(filtered.len().to_string()));
+                    OutputCol::Aggregate(agg) => {
+                        let idx = agg.col_index().unwrap_or(0);
+                        row.push(compute_aggregate(agg, filtered.iter(), idx));
                     }
                     _ => row.push(None),
                 }
@@ -253,8 +275,13 @@ impl AdbMysqlHandler {
                     .iter()
                     .map(|col| match col {
                         OutputCol::TableColumn(idx) => row.get(*idx).cloned().map(Some).unwrap_or(None),
-                        OutputCol::Aggregate(AggFunc::CountStar) => {
-                            Some(filtered.len().to_string())
+                        OutputCol::Aggregate(agg) => {
+                            // Aggregates are constant across rows; compute over
+                            // the whole filtered set. (Reached only when an
+                            // aggregate appears without triggering the
+                            // has_aggregates branch above.)
+                            let idx = agg.col_index().unwrap_or(0);
+                            compute_aggregate(agg, filtered.iter(), idx)
                         }
                         OutputCol::Literal(v) => Some(v.clone()),
                     })
@@ -391,25 +418,21 @@ impl AdbMysqlHandler {
                         result.push(OutputCol::TableColumn(i));
                     }
                 }
-                SelectItem::UnnamedExpr(Expr::Function(f)) => {
-                    let name = f.name.to_string().to_uppercase();
-                    if name == "COUNT" {
-                        result.push(OutputCol::Aggregate(AggFunc::CountStar));
-                    } else {
-                        result.push(OutputCol::Literal("0".to_string()));
-                    }
+            SelectItem::UnnamedExpr(Expr::Function(f)) => {
+                match resolve_agg_func(f, table_columns) {
+                    Some(agg) => result.push(OutputCol::Aggregate(agg)),
+                    None => result.push(OutputCol::Literal(String::new())),
                 }
-                SelectItem::ExprWithAlias {
-                    expr: Expr::Function(f),
-                    alias: _,
-                } => {
-                    let name = f.name.to_string().to_uppercase();
-                    if name == "COUNT" {
-                        result.push(OutputCol::Aggregate(AggFunc::CountStar));
-                    } else {
-                        result.push(OutputCol::Literal("0".to_string()));
-                    }
+            }
+            SelectItem::ExprWithAlias {
+                expr: Expr::Function(f),
+                alias: _,
+            } => {
+                match resolve_agg_func(f, table_columns) {
+                    Some(agg) => result.push(OutputCol::Aggregate(agg)),
+                    None => result.push(OutputCol::Literal(String::new())),
                 }
+            }
                 _ => {
                     result.push(OutputCol::Literal(String::new()));
                 }
@@ -446,9 +469,7 @@ impl AdbMysqlHandler {
                     }).unwrap_or(ColumnType::String);
                     (n, ct)
                 }
-                OutputCol::Aggregate(_) => {
-                    ("COUNT(*)".to_string(), ColumnType::Int)
-                }
+                OutputCol::Aggregate(agg) => aggregate_column_def(agg, table_columns),
                 OutputCol::Literal(_) => {
                     ("?".to_string(), ColumnType::String)
                 }
@@ -508,8 +529,10 @@ impl AdbMysqlHandler {
                         let val = group_rows.first().and_then(|r| r.get(*idx).cloned());
                         row.push(val.map(Some).unwrap_or(None));
                     }
-                    OutputCol::Aggregate(AggFunc::CountStar) => {
-                        row.push(Some(group_rows.len().to_string()));
+                    OutputCol::Aggregate(agg) => {
+                        let idx = agg.col_index().unwrap_or(0);
+                        // group_rows: &Vec<&Vec<String>>; deref to &&Vec<String>.
+                        row.push(compute_aggregate(agg, group_rows.iter().copied(), idx));
                     }
                     OutputCol::Literal(v) => {
                         row.push(Some(v.clone()));
@@ -847,6 +870,147 @@ impl QueryHandler for AdbMysqlHandler {
 }
 
 /// Compare two string values, trying numeric first, then lexicographic
+/// Resolve a parsed SQL aggregate function into an [`AggFunc`].
+///
+/// Returns `None` for unrecognised functions or malformed arguments (e.g. a
+/// SUM with no column), so the caller can fall back to a literal column.
+fn resolve_agg_func(
+    f: &sqlparser::ast::Function,
+    table_columns: &[StorageColumnDef],
+) -> Option<AggFunc> {
+    let name = f.name.to_string().to_uppercase();
+    // COUNT(*) is special: it has a bare wildcard argument (or no args).
+    let args = match &f.args {
+        FunctionArguments::List(list) => &list.args,
+        _ => return None,
+    };
+    if name == "COUNT" {
+        if matches!(args.first(), Some(FunctionArg::Unnamed(FunctionArgExpr::Wildcard)))
+            || matches!(
+                args.first(),
+                Some(FunctionArg::Unnamed(FunctionArgExpr::QualifiedWildcard(_)))
+            ) {
+            return Some(AggFunc::CountStar);
+        }
+        return single_col_index(args, table_columns).map(AggFunc::Count);
+    }
+    let idx = single_col_index(args, table_columns)?;
+    match name.as_str() {
+        "SUM" => Some(AggFunc::Sum(idx)),
+        "AVG" => Some(AggFunc::Avg(idx)),
+        "MIN" => Some(AggFunc::Min(idx)),
+        "MAX" => Some(AggFunc::Max(idx)),
+        _ => None,
+    }
+}
+
+/// Extract the column index of the first positional `Expr(Identifier)` argument.
+fn single_col_index(args: &[FunctionArg], table_columns: &[StorageColumnDef]) -> Option<usize> {
+    let first = args.first()?;
+    if let FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Identifier(ident))) = first {
+        return table_columns.iter().position(|c| c.name == ident.value);
+    }
+    None
+}
+
+/// Produce the (name, type) column definition for an aggregate output column.
+fn aggregate_column_def(agg: &AggFunc, table_columns: &[StorageColumnDef]) -> (String, ColumnType) {
+    let col_name = |idx: usize| {
+        table_columns
+            .get(idx)
+            .map(|c| c.name.as_str())
+            .unwrap_or("?")
+    };
+    match agg {
+        AggFunc::CountStar => ("COUNT(*)".to_string(), ColumnType::Int),
+        AggFunc::Count(i) => (format!("COUNT({})", col_name(*i)), ColumnType::Int),
+        AggFunc::Sum(i) => (format!("SUM({})", col_name(*i)), ColumnType::Double),
+        AggFunc::Avg(i) => (format!("AVG({})", col_name(*i)), ColumnType::Double),
+        // MIN/MAX preserve the underlying column's domain.
+        AggFunc::Min(i) | AggFunc::Max(i) => {
+            let fname = if matches!(agg, AggFunc::Min(_)) { "MIN" } else { "MAX" };
+            let ct = table_columns.get(*i).map(|c| match c.col_type {
+                StorageColumnType::Int => ColumnType::Int,
+                StorageColumnType::Double => ColumnType::Double,
+                _ => ColumnType::String,
+            }).unwrap_or(ColumnType::String);
+            (format!("{}({})", fname, col_name(*i)), ct)
+        }
+    }
+}
+
+/// Compute an aggregate over an iterator of row references.
+///
+/// `rows` yields borrowed rows; `col_idx` selects the cell within each row.
+/// Non-numeric cells (for Sum/Avg) are skipped. Empty inputs yield `None`
+/// except for COUNT, which yields 0.
+fn compute_aggregate<'a, I>(agg: &AggFunc, rows: I, col_idx: usize) -> Option<String>
+where
+    I: IntoIterator<Item = &'a Vec<String>>,
+{
+    match agg {
+        AggFunc::CountStar => Some(rows.into_iter().count().to_string()),
+        AggFunc::Count(_) => {
+            // Count non-NULL cells. NULL is represented as an empty string here
+            // (storage stringifies values; NULL becomes "").
+            let n = rows
+                .into_iter()
+                .filter(|r| r.get(col_idx).map(|s| !s.is_empty()).unwrap_or(false))
+                .count();
+            Some(n.to_string())
+        }
+        AggFunc::Sum(_) | AggFunc::Avg(_) => {
+            let nums: Vec<f64> = rows
+                .into_iter()
+                .filter_map(|r| r.get(col_idx)?.parse::<f64>().ok())
+                .collect();
+            if nums.is_empty() {
+                return None;
+            }
+            match agg {
+                AggFunc::Sum(_) => Some(format_f64(nums.iter().sum())),
+                AggFunc::Avg(_) => Some(format_f64(nums.iter().sum::<f64>() / nums.len() as f64)),
+                _ => unreachable!(),
+            }
+        }
+        AggFunc::Min(_) | AggFunc::Max(_) => {
+            let mut best: Option<&String> = None;
+            for r in rows {
+                let Some(val) = r.get(col_idx) else { continue };
+                // Skip SQL NULL (empty string) for MIN/MAX.
+                if val.is_empty() {
+                    continue;
+                }
+                best = Some(match best {
+                    None => val,
+                    Some(cur) => {
+                        let ord = compare_string_values(cur, val)
+                            .unwrap_or(std::cmp::Ordering::Equal);
+                        match agg {
+                            AggFunc::Min(_) => {
+                                if ord == std::cmp::Ordering::Greater {
+                                    val
+                                } else {
+                                    cur
+                                }
+                            }
+                            AggFunc::Max(_) => {
+                                if ord == std::cmp::Ordering::Less {
+                                    val
+                                } else {
+                                    cur
+                                }
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                });
+            }
+            best.map(|s| s.clone())
+        }
+    }
+}
+
 fn compare_string_values(a: &str, b: &str) -> Option<std::cmp::Ordering> {
     if let (Ok(na), Ok(nb)) = (a.parse::<f64>(), b.parse::<f64>()) {
         // Handle NaN explicitly since partial_cmp returns None for NaN
@@ -869,5 +1033,108 @@ fn format_f64(v: f64) -> String {
         format!("{}", v as i64)
     } else {
         format!("{}", v)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rows() -> Vec<Vec<String>> {
+        vec![
+            vec!["10".to_string(), "a".to_string()],
+            vec!["20".to_string(), "".to_string()],
+            vec!["5".to_string(), "b".to_string()],
+        ]
+}
+
+    #[test]
+    fn test_aggregate_count_star() {
+        let r = rows();
+        assert_eq!(compute_aggregate(&AggFunc::CountStar, r.iter(), 0), Some("3".to_string()));
+    }
+
+    #[test]
+    fn test_aggregate_count_col_skips_nulls() {
+        // Column 1 has one empty (NULL) cell -> COUNT(col1) = 2.
+        let r = rows();
+        assert_eq!(compute_aggregate(&AggFunc::Count(1), r.iter(), 1), Some("2".to_string()));
+    }
+
+    #[test]
+    fn test_aggregate_sum() {
+        let r = rows();
+        assert_eq!(compute_aggregate(&AggFunc::Sum(0), r.iter(), 0), Some("35".to_string()));
+    }
+
+    #[test]
+    fn test_aggregate_avg() {
+        let r = rows();
+        assert_eq!(compute_aggregate(&AggFunc::Avg(0), r.iter(), 0), Some(format_f64(35.0 / 3.0)));
+    }
+
+    #[test]
+    fn test_aggregate_min_numeric() {
+        let r = rows();
+        assert_eq!(compute_aggregate(&AggFunc::Min(0), r.iter(), 0), Some("5".to_string()));
+    }
+
+    #[test]
+    fn test_aggregate_max_numeric() {
+        let r = rows();
+        assert_eq!(compute_aggregate(&AggFunc::Max(0), r.iter(), 0), Some("20".to_string()));
+    }
+
+    #[test]
+    fn test_aggregate_min_string() {
+        // Column 1 non-null values: "a", "b" -> min is "a".
+        let r = rows();
+        assert_eq!(compute_aggregate(&AggFunc::Min(1), r.iter(), 1), Some("a".to_string()));
+    }
+
+    #[test]
+    fn test_aggregate_sum_empty_returns_none() {
+        let r: Vec<Vec<String>> = vec![];
+        assert_eq!(compute_aggregate(&AggFunc::Sum(0), r.iter(), 0), None);
+    }
+
+    #[test]
+    fn test_aggregate_count_star_empty_is_zero() {
+        let r: Vec<Vec<String>> = vec![];
+        assert_eq!(
+            compute_aggregate(&AggFunc::CountStar, std::iter::empty(), 0),
+            Some("0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_aggregate_min_skips_null() {
+        // NULL (empty) cells must not win MIN.
+        let r = vec![vec!["".to_string()], vec!["7".to_string()]];
+        assert_eq!(compute_aggregate(&AggFunc::Min(0), r.iter(), 0), Some("7".to_string()));
+    }
+
+    #[test]
+    fn test_aggregate_column_def_naming() {
+        let cols = vec![
+            StorageColumnDef { name: "amount".to_string(), col_type: StorageColumnType::Double },
+            StorageColumnDef { name: "label".to_string(), col_type: StorageColumnType::VarChar },
+        ];
+        assert_eq!(
+            aggregate_column_def(&AggFunc::Sum(0), &cols),
+            ("SUM(amount)".to_string(), ColumnType::Double)
+        );
+        assert_eq!(
+            aggregate_column_def(&AggFunc::Avg(0), &cols),
+            ("AVG(amount)".to_string(), ColumnType::Double)
+        );
+        assert_eq!(
+            aggregate_column_def(&AggFunc::Min(1), &cols),
+            ("MIN(label)".to_string(), ColumnType::String)
+        );
+        assert_eq!(
+            aggregate_column_def(&AggFunc::CountStar, &cols),
+            ("COUNT(*)".to_string(), ColumnType::Int)
+        );
     }
 }
