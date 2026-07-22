@@ -733,9 +733,12 @@ impl DefaultClickHouseHandler {
 
         // Insert each tuple
         for values in value_tuples {
-            db.with_table_mut(&table_name, |table| {
-                table.insert_row(values);
-            });
+            let result = db.with_table_mut(&table_name, |table| table.insert_row(values));
+            match result {
+                Some(Err(e)) => return format!("Error: {}", e),
+                None => return "Error: table disappeared during insert".to_string(),
+                Some(Ok(())) => {}
+            }
         }
 
         "OK\n".to_string()

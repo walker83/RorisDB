@@ -154,7 +154,7 @@ impl RespParser {
 
     fn parse_array(buf: &mut BytesMut) -> Result<Option<RespValue>, RespError> {
         // First, check if the complete array is available without consuming anything
-        match Self::measure_value(buf, 0) {
+        match Self::measure_value(buf, 0, 0) {
             Some(total_size) if total_size <= buf.len() => {
                 // We have all the data, safe to parse
             }
@@ -200,7 +200,11 @@ impl RespParser {
     /// Measure the total byte size of a RESP value starting at `offset` in the buffer.
     /// Returns None if the data is incomplete or invalid.
     /// Does NOT modify the buffer.
-    fn measure_value(buf: &[u8], offset: usize) -> Option<usize> {
+    ///
+    /// `depth` tracks the array nesting depth to prevent stack overflow on
+    /// malicious deeply-nested payloads (e.g. `*1\r\n*1\r\n*1\r\n...`).
+    fn measure_value(buf: &[u8], offset: usize, depth: usize) -> Option<usize> {
+        const MAX_DEPTH: usize = 128;
         if offset >= buf.len() {
             return None;
         }
@@ -233,7 +237,11 @@ impl RespParser {
                 }
             }
             b'*' => {
-                // Array
+                // Array — reject nesting beyond MAX_DEPTH to avoid stack
+                // overflow from a pathological payload.
+                if depth >= MAX_DEPTH {
+                    return None;
+                }
                 let newline_pos = Self::find_crlf_in(buf, offset + 1)?;
                 let count_str = std::str::from_utf8(&buf[offset + 1..newline_pos]).ok()?;
                 let count: i64 = count_str.parse().ok()?;
@@ -242,7 +250,7 @@ impl RespParser {
                 } else {
                     let mut pos = newline_pos + 2;
                     for _ in 0..count {
-                        let elem_size = Self::measure_value(buf, pos)?;
+                        let elem_size = Self::measure_value(buf, pos, depth + 1)?;
                         pos += elem_size;
                     }
                     if pos <= buf.len() {
@@ -482,6 +490,22 @@ mod tests {
             RespValue::BulkString(b"foo".to_vec()),
             RespValue::BulkString(b"bar".to_vec()),
         ]));
+    }
+
+    #[test]
+    fn test_parse_deeply_nested_array_does_not_overflow() {
+        // A pathological payload of 500 nested single-element arrays must not
+        // crash the parser with a stack overflow. Before the depth limit it
+        // recursed ~500 frames; now it bails out at depth 128 and returns
+        // Incomplete (None) instead.
+        let mut payload = Vec::new();
+        for _ in 0..500 {
+            payload.extend_from_slice(b"*1\r\n");
+        }
+        payload.extend_from_slice(b"$1\r\na\r\n");
+        let mut buf = BytesMut::from(&payload[..]);
+        // Must not panic. Either Ok(None) (incomplete) or an error is fine.
+        let _ = RespParser::parse(&mut buf);
     }
 
     #[test]

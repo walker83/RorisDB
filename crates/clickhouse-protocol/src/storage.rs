@@ -26,8 +26,21 @@ impl Table {
         self.column_types.insert(name, type_name);
     }
 
-    pub fn insert_row(&mut self, values: Vec<String>) {
+    /// Insert a row of values into the table.
+    ///
+    /// Missing values are padded with empty strings (matching NULL-ish
+    /// behaviour for omitted trailing columns). Supplying *more* values than
+    /// the table has columns is rejected: previously the extras were silently
+    /// dropped, which hid data-loss bugs in client code.
+    pub fn insert_row(&mut self, values: Vec<String>) -> Result<(), String> {
         let num_cols = self.column_order.len();
+        if values.len() > num_cols {
+            return Err(format!(
+                "expected {} values but got {}",
+                num_cols,
+                values.len()
+            ));
+        }
         for (i, col_name) in self.column_order.iter().enumerate() {
             let value = if i < values.len() {
                 values[i].clone()
@@ -38,6 +51,7 @@ impl Table {
                 column.push(value);
             }
         }
+        Ok(())
     }
 
     pub fn select_all(&self) -> Vec<HashMap<String, String>> {
@@ -247,5 +261,48 @@ impl ClickHouseStorage {
 impl Default for ClickHouseStorage {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn table_with_cols(names: &[&str]) -> Table {
+        let mut t = Table::new();
+        for n in names {
+            t.create_column(n.to_string(), "String".to_string());
+        }
+        t
+    }
+
+    #[test]
+    fn test_insert_row_pads_missing_columns() {
+        let mut t = table_with_cols(&["a", "b"]);
+        // Supplying fewer values than columns: missing ones padded with "".
+        assert!(t.insert_row(vec!["1".to_string()]).is_ok());
+        assert_eq!(t.columns["a"], vec!["1".to_string()]);
+        assert_eq!(t.columns["b"], vec!["".to_string()]);
+    }
+
+    #[test]
+    fn test_insert_row_rejects_extra_values() {
+        let mut t = table_with_cols(&["a", "b"]);
+        // Supplying more values than columns must now be an error rather than
+        // silently dropping the extras.
+        let err = t
+            .insert_row(vec!["1".to_string(), "2".to_string(), "3".to_string()])
+            .unwrap_err();
+        assert!(err.contains("expected 2 values but got 3"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_insert_row_exact_match() {
+        let mut t = table_with_cols(&["a", "b"]);
+        assert!(t
+            .insert_row(vec!["1".to_string(), "2".to_string()])
+            .is_ok());
+        assert_eq!(t.columns["a"], vec!["1".to_string()]);
+        assert_eq!(t.columns["b"], vec!["2".to_string()]);
     }
 }

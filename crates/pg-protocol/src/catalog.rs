@@ -42,6 +42,38 @@
 use fe_catalog::CatalogManager;
 use mysql_protocol::server::{ColumnDef, ColumnType, QueryResult};
 
+/// Test whether `upper_sql` references `information_schema.<view>` as a
+/// standalone dotted identifier (e.g. `FROM information_schema.tables`),
+/// rather than as a substring of a longer identifier such as
+/// `my_information_schema_tables`.
+///
+/// `upper_sql` must already be upper-cased; `view` is the upper-case view name
+/// without the schema prefix (e.g. `"TABLES"`).
+fn references_info_schema_view(upper_sql: &str, view: &str) -> bool {
+    let needle = format!("INFORMATION_SCHEMA.{}", view);
+    let mut start = 0usize;
+    while let Some(idx) = upper_sql[start..].find(&needle) {
+        let abs = start + idx;
+        // Character before `INFORMATION_SCHEMA` must be a non-identifier char
+        // (whitespace, comma, paren, start-of-string, ...).
+        let before_ok = abs == 0 || {
+            let prev = upper_sql.as_bytes()[abs - 1] as char;
+            !prev.is_ascii_alphanumeric() && prev != '_'
+        };
+        // Character after the view name must also be a non-identifier boundary.
+        let after = abs + needle.len();
+        let after_ok = after >= upper_sql.len() || {
+            let next = upper_sql.as_bytes()[after] as char;
+            !next.is_ascii_alphanumeric() && next != '_'
+        };
+        if before_ok && after_ok {
+            return true;
+        }
+        start = abs + needle.len();
+    }
+    false
+}
+
 /// Check if a SQL query is a pg_catalog or information_schema query and return
 /// mock results. Returns `Some(QueryResult)` if the query was handled, or
 /// `None` if it should be passed through to the normal query handler.
@@ -250,19 +282,24 @@ pub fn handle_pg_catalog_query(
     // ======================================================================
     // information_schema queries
     // ======================================================================
-    if upper.starts_with("SELECT") && upper.contains("INFORMATION_SCHEMA.TABLES") {
+    // Match `INFORMATION_SCHEMA.<view>` as a standalone dotted identifier so
+    // that a column or table literally named `foo_information_schema_tables`
+    // is not mistakenly intercepted. We require a non-identifier char (or the
+    // start of the string) before `INFORMATION_SCHEMA` and treat the part
+    // after the dot as the view name followed by a non-identifier boundary.
+    if upper.starts_with("SELECT") && references_info_schema_view(&upper, "TABLES") {
         return Some(handle_information_schema_tables(catalog, current_db));
     }
 
-    if upper.starts_with("SELECT") && upper.contains("INFORMATION_SCHEMA.COLUMNS") {
+    if upper.starts_with("SELECT") && references_info_schema_view(&upper, "COLUMNS") {
         return Some(handle_information_schema_columns(catalog, current_db));
     }
 
-    if upper.starts_with("SELECT") && upper.contains("INFORMATION_SCHEMA.SCHEMATA") {
+    if upper.starts_with("SELECT") && references_info_schema_view(&upper, "SCHEMATA") {
         return Some(handle_information_schema_schemata(catalog));
     }
 
-    if upper.starts_with("SELECT") && upper.contains("INFORMATION_SCHEMA.VIEWS") {
+    if upper.starts_with("SELECT") && references_info_schema_view(&upper, "VIEWS") {
         return Some(handle_information_schema_views(catalog, current_db));
     }
 
@@ -1535,6 +1572,45 @@ fn map_harness_type_to_sql_type(data_type: &types::DataType) -> String {
 mod tests {
     use super::*;
     use fe_catalog::CatalogManager;
+
+    #[test]
+    fn test_references_info_schema_view_matches_from() {
+        let sql = "SELECT * FROM INFORMATION_SCHEMA.TABLES";
+        assert!(references_info_schema_view(sql, "TABLES"));
+    }
+
+    #[test]
+    fn test_references_info_schema_view_matches_lowercase() {
+        let sql = "SELECT * FROM information_schema.tables WHERE TRUE";
+        assert!(references_info_schema_view(&sql.to_uppercase(), "TABLES"));
+    }
+
+    #[test]
+    fn test_references_info_schema_view_rejects_substring_identifier() {
+        // A column literally named `foo_information_schema_tables` must NOT
+        // be treated as an information_schema query.
+        let sql = "SELECT foo_information_schema_tables FROM t";
+        assert!(!references_info_schema_view(sql, "TABLES"));
+    }
+
+    #[test]
+    fn test_references_info_schema_view_rejects_suffix() {
+        // `information_schema.tables_extra` is a different identifier.
+        let sql = "SELECT * FROM INFORMATION_SCHEMA.TABLES_EXTRA";
+        assert!(!references_info_schema_view(sql, "TABLES"));
+    }
+
+    #[test]
+    fn test_references_info_schema_view_distinct_views() {
+        assert!(references_info_schema_view(
+            "SELECT * FROM INFORMATION_SCHEMA.COLUMNS",
+            "COLUMNS"
+        ));
+        assert!(!references_info_schema_view(
+            "SELECT * FROM INFORMATION_SCHEMA.COLUMNS",
+            "TABLES"
+        ));
+    }
 
     #[test]
     fn test_handle_version() {

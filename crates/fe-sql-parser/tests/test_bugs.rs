@@ -51,4 +51,36 @@ mod bug_tests {
         let result = parse_sql("set @@global.max_connections = 1000");
         assert!(result.is_ok(), "set @@global should parse: {:?}", result);
     }
+
+    #[test]
+    fn test_drop_analyze_job_lowercase() {
+        // Dispatch is case-insensitive; the strip_prefix must be too, so the
+        // lowercase form parses instead of erroring.
+        let result = parse_sql("drop analyze job job_123");
+        assert!(result.is_ok(), "lowercase drop analyze job should parse: {:?}", result);
+    }
+
+    #[test]
+    fn test_drop_analyze_job_mixed_case() {
+        let result = parse_sql("Drop Analyze Job job_123");
+        assert!(result.is_ok(), "mixed-case drop analyze job should parse: {:?}", result);
+    }
+
+    #[test]
+    fn test_set_value_escaped_backslash_before_quote() {
+        // `'foo\\'bar'` → after correct unescaping the value is `foo\'bar`:
+        // `\\` is an escaped backslash, then a literal quote. A naive
+        // replace-chain would have collapsed `\\'` into `'` incorrectly.
+        use fe_sql_parser::ast::{Expr, LiteralValue, Statement};
+        let stmts = parse_sql("SET x = 'foo\\\\'bar'").expect("should parse");
+        match stmts.first() {
+            Some(Statement::SetVariable(sv)) => match &sv.value {
+                Expr::Literal(LiteralValue::String(s)) => {
+                    assert_eq!(s, "foo\\'bar");
+                }
+                other => panic!("expected string literal, got {:?}", other),
+            },
+            other => panic!("expected SetVariable, got {:?}", other),
+        }
+    }
 }

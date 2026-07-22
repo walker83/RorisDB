@@ -322,7 +322,10 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParseError> {
         return parse_drop_stats(sql);
     }
     if trimmed.starts_with("DROP ANALYZE JOB") {
-        let Some(rest) = sql.trim().strip_prefix("DROP ANALYZE JOB") else {
+        // Use a case-insensitive strip on the original SQL so lowercase /
+        // mixed-case forms (e.g. "drop analyze job 123") work, matching the
+        // dispatch check on `trimmed` (which is upper-cased).
+        let Some(rest) = strip_prefix_ci(sql.trim(), "DROP ANALYZE JOB") else {
             return Err(ParseError::SyntaxError {
                 position: 0,
                 message: "Expected DROP ANALYZE JOB".into(),
@@ -945,11 +948,29 @@ fn parse_set_value(s: &str) -> Expr {
     // Quoted string
     if (s.starts_with('\'') && s.ends_with('\'')) || (s.starts_with('"') && s.ends_with('"')) {
         let inner = &s[1..s.len() - 1];
-        // Handle escaped quotes
-        let unescaped = inner
-            .replace("\\'", "'")
-            .replace("\\\"", "\"")
-            .replace("\\\\", "\\");
+        // Handle backslash escapes with a single left-to-right pass. A chain
+        // of `replace` calls cannot do this correctly because the order of the
+        // replacements changes the meaning of the result (e.g. `\\'` is an
+        // escaped backslash followed by a quote, not an escaped quote).
+        let mut unescaped = String::with_capacity(inner.len());
+        let mut chars = inner.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('\'') => unescaped.push('\''),
+                    Some('"') => unescaped.push('"'),
+                    Some('\\') => unescaped.push('\\'),
+                    Some(other) => {
+                        // Unknown escape: keep both the backslash and the char.
+                        unescaped.push('\\');
+                        unescaped.push(other);
+                    }
+                    None => unescaped.push('\\'),
+                }
+            } else {
+                unescaped.push(c);
+            }
+        }
         return Expr::Literal(LiteralValue::String(unescaped));
     }
 
