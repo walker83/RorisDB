@@ -343,6 +343,31 @@ impl HarnessQueryHandler {
     }
 }
 
+/// Generate a random hex secret of `bytes` random bytes (2*`bytes` hex chars).
+///
+/// Uses process entropy (time + pid) hashed through a simple xorshift mix,
+/// matching the pattern used by `mysql_protocol::auth::secure_credentials` for
+/// non-cryptographic but unpredictable startup secrets. Suitable for default
+/// credentials that an operator is expected to override via env vars.
+fn generate_random_secret(bytes: usize) -> String {
+    use std::time::SystemTime;
+    let seed = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0) ^ (std::process::id() as u128);
+    // xorshift64* style mix to spread entropy across the hex output.
+    let mut state = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut out = String::with_capacity(bytes * 2);
+    while out.len() < bytes * 2 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        out.push_str(&format!("{:016x}", state));
+    }
+    out.truncate(bytes * 2);
+    out
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -496,14 +521,31 @@ async fn main() -> Result<()> {
         "HarnessDB starting MaxCompute server on port {} (may fail silently if port is in use)",
         args.maxcompute_port
     );
-    let mc_access_key_id = std::env::var("HARNESS_MC_ACCESS_KEY_ID").unwrap_or_else(|_| {
-        tracing::warn!("HARNESS_MC_ACCESS_KEY_ID not set — using default 'harness'");
-        "harness".to_string()
-    });
-    let mc_access_key_secret = std::env::var("HARNESS_MC_ACCESS_KEY_SECRET").unwrap_or_else(|_| {
-        tracing::warn!("HARNESS_MC_ACCESS_KEY_SECRET not set — using default (insecure)");
-        "harness-secret".to_string()
-    });
+    let mc_access_key_id = std::env::var("HARNESS_MC_ACCESS_KEY_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            // Do not fall back to a well-known default credential — generate a
+            // random key and warn, mirroring secure_credentials() for MySQL.
+            let generated = generate_random_secret(24);
+            tracing::warn!(
+                "HARNESS_MC_ACCESS_KEY_ID not set — generated random access key id: {} \
+                 Set HARNESS_MC_ACCESS_KEY_ID for stable credentials.",
+                generated
+            );
+            generated
+        });
+    let mc_access_key_secret = std::env::var("HARNESS_MC_ACCESS_KEY_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let generated = generate_random_secret(32);
+            tracing::warn!(
+                "HARNESS_MC_ACCESS_KEY_SECRET not set — generated random access key secret. \
+                 Set HARNESS_MC_ACCESS_KEY_SECRET for stable credentials."
+            );
+            generated
+        });
     let mc_config = McServerConfig {
         bind_addr: config.server.bind_addr.clone(),
         port: args.maxcompute_port,
@@ -524,12 +566,30 @@ async fn main() -> Result<()> {
         "HarnessDB starting Hologres server on port {} (may fail silently if port is in use)",
         args.hologres_port
     );
+    let pg_username = std::env::var("HARNESS_PG_USERNAME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "harness".to_string());
+    let pg_password = std::env::var("HARNESS_PG_PASSWORD")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            // Generate a random password instead of hardcoding a well-known
+            // default. The operator must set HARNESS_PG_PASSWORD to log in.
+            let generated = generate_random_secret(24);
+            tracing::warn!(
+                "HARNESS_PG_PASSWORD not set — generated random PostgreSQL password: {} \
+                 Set HARNESS_PG_PASSWORD for stable credentials.",
+                generated
+            );
+            generated
+        });
     let pg_config = PgServerConfig {
         bind_addr: config.server.bind_addr.clone(),
         port: args.hologres_port,
         max_connections: config.server.max_connections,
-        username: "harness".to_string(),
-        password: "harness-secret".to_string(),
+        username: pg_username,
+        password: pg_password,
         accept_any_password: false,
     };
     let pg_server = PgServer::new(pg_config, query_handler.clone());
