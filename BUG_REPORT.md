@@ -12,7 +12,44 @@
 **已修复: ~100个bug** (131个fix提交, 15个crate)
 **剩余: ~285个bug** (主要是骨架实现需要完整协议重写)
 
-### 已修复的关键Bug
+### 第二轮修复 (2026-07-21)
+
+本轮聚焦核验 BUG_REPORT 中标注"已修复"项的真实状态，并修复经核验仍存在的真实 bug。共 8 个 fix 提交，新增 60+ 个回归测试，测试从 **481 failed → 0 failed**（1665 passed）。
+
+#### 🔴 P0: e2e 测试基础设施 (修复 481 个测试失败)
+- **根因**: `fe_main.rs` 无条件使用 `secure_credentials()`（未设 `HARNESS_ROOT_PASSWORD` 时生成随机 root 密码），所有 e2e 测试用 root 无密码连接 → 481 个测试全部认证失败
+- **修复**: 新增 `--dev` 标志走 `default_credentials()`；抽取 14 个 e2e suite 重复的 harness 样板到共享 `tests/integration/src/harness.rs`
+
+#### 🔴 P1: CRITICAL 协议正确性
+| Bug | 修复 |
+|-----|------|
+| PG 参数化查询 ($1/$2) 完全不工作 | Portal 存储 Bind 参数，`substitute_params` 替换占位符（引号/注释感知，防注入） |
+| PG Execute 错误路径双重 ReadyForQuery | 移除错误分支的 `send_ready_for_query`，符合扩展查询协议 |
+| Cassandra ROWS 结果缺 CQL v4 Metadata 段 | 补全 flags/列名/列类型元数据 |
+
+#### 🟡 P2: HIGH 功能性
+| Bug | 修复 |
+|-----|------|
+| ADB MySQL SUM/AVG/MIN/MAX 返回 "0" | 扩展 AggFunc 枚举，`compute_aggregate` 实现真实聚合（含 NaN/NULL 处理） |
+| tsql-executor DML affected_rows 被丢弃 | QueryResult 新增 `affected_rows` 字段 + `ok_with_affected` 构造方法 |
+| ES bulk update 不存在文档返回 200 | 改为 404 not_found，errors 正确反映失败 |
+| ES POST `_doc/{id}` 始终返回 created | 检查 existed，返回 updated/created |
+| MaxCompute/PG 硬编码凭证 harness/harness-secret | env 未设置时随机生成，移除固定默认值 |
+
+#### 🟢 P3: MEDIUM 协议合规性
+| Bug | 修复 |
+|-----|------|
+| PG information_schema 用 contains | 改为单词边界精确匹配 `references_info_schema_view` |
+| InfluxDB 行协议不支持转义 | 逐字符扫描重写解析器，处理 `\,` `\ ` `\=` 与引号内分隔符；补全 TRUE/FALSE |
+| SQL parser parse_set_value 转义替换顺序 | 单次左到右扫描替代 replace 链 |
+| SQL parser DROP ANALYZE JOB 大小写敏感 | 用 `strip_prefix_ci` |
+| Redis 递归解析无深度限制（栈溢出） | measure_value 加 depth 参数，128 层上限 |
+| ClickHouse INSERT 静默丢弃多余列 | insert_row 返回 Result，超列数报错 |
+
+### 核验结论
+逐条核验 BUG_REPORT 中标注"已修复"的 ~46 个 bug：约 40 个为真修复，6 个部分修复（本轮补全），3 个实际未修复（本轮修复）。详见各协议章节。
+
+
 
 | # | Crate | Bug | 修复 |
 |---|-------|-----|------|
