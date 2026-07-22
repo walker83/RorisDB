@@ -8,111 +8,33 @@
 
 use lazy_static::lazy_static;
 use mysql::prelude::*;
-use mysql::{Opts, OptsBuilder, Row, Value};
+use mysql::{Row, Value};
 use std::cell::RefCell;
-use std::path::Path;
-use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::thread;
-use std::time::Duration;
 
 const MYSQL_PORT: u16 = 29970;
 
 static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-struct E2eServer {
-    child: Child,
-    meta_dir: String,
-    data_dir: String,
-}
-
-impl E2eServer {
-    fn start() -> Self {
-        let pid = std::process::id();
-        let port = MYSQL_PORT;
-        let meta_dir = format!("/tmp/harness_e2e_meta_{}_{}", pid, port);
-        let data_dir = format!("/tmp/harness_e2e_data_{}_{}", pid, port);
-        let _ = std::fs::remove_dir_all(&meta_dir);
-        let _ = std::fs::remove_dir_all(&data_dir);
-        std::fs::create_dir_all(&meta_dir).unwrap();
-        std::fs::create_dir_all(&data_dir).unwrap();
-        let binary = find_binary();
-        let child = Command::new(&binary)
-            .arg("--mysql-port")
-            .arg(MYSQL_PORT.to_string())
-            .arg("--meta-dir")
-            .arg(&meta_dir)
-            .arg("--data-dir")
-            .arg(&data_dir)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap_or_else(|e| panic!("Failed to start harness-db '{}': {}", binary, e));
-        E2eServer {
-            child,
-            meta_dir,
-            data_dir,
-        }
-    }
-
-    fn wait_ready(&self) {
-        let start = std::time::Instant::now();
-        loop {
-            if start.elapsed() > Duration::from_secs(30) {
-                panic!("Server not ready within 30s on port {}", MYSQL_PORT);
-            }
-            if std::net::TcpStream::connect(format!("127.0.0.1:{}", MYSQL_PORT)).is_ok() {
-                thread::sleep(Duration::from_millis(500));
-                return;
-            }
-            thread::sleep(Duration::from_millis(300));
-        }
-    }
-}
-
-impl Drop for E2eServer {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        let _ = std::fs::remove_dir_all(&self.meta_dir);
-        let _ = std::fs::remove_dir_all(&self.data_dir);
-    }
-}
-
-fn find_binary() -> String {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    for p in &[
-        format!("{}/../../target/release/harness-db", manifest_dir),
-        format!("{}/../../target/debug/harness-db", manifest_dir),
-    ] {
-        if Path::new(p).exists() {
-            return p.to_string();
-        }
-    }
-    panic!("harness-db binary not found. Build with: cargo build --release");
-}
+// E2eServer, find_binary and make_conn live in the shared
+// `integration_tests::harness` module so a server-side spawn change (e.g.
+// passing --dev for auth) only needs to be made in one place.
+use integration_tests::harness;
 
 fn make_conn() -> mysql::Conn {
-    let opts = OptsBuilder::new()
-        .ip_or_hostname(Some("127.0.0.1"))
-        .tcp_port(MYSQL_PORT)
-        .user(Some("root"))
-        .pass(None::<String>);
-    mysql::Conn::new(Opts::from(opts)).expect("Failed to create connection")
+    harness::make_conn(MYSQL_PORT)
 }
 
 struct TestContext {
     #[allow(dead_code)]
-    server: Arc<E2eServer>,
+    server: Arc<harness::E2eServer>,
     conn: RefCell<mysql::Conn>,
 }
 
 lazy_static! {
-    static ref SERVER: Arc<E2eServer> = {
-        let s = E2eServer::start();
-        s.wait_ready();
-        Arc::new(s)
+    static ref SERVER: Arc<harness::E2eServer> = {
+        harness::shared_server(MYSQL_PORT)
     };
 }
 

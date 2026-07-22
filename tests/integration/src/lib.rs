@@ -1,4 +1,5 @@
 pub mod common;
+pub mod harness;
 
 pub use fe_catalog;
 pub use fe_sql_parser;

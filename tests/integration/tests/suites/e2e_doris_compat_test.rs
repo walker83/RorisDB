@@ -1,9 +1,5 @@
 use mysql::prelude::*;
-use mysql::{Conn, Opts, OptsBuilder, Row, Value};
-use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::thread;
-use std::time::Duration;
+use mysql::{Conn, Row, Value};
 
 // ===========================================================================
 // Test Configuration
@@ -14,100 +10,13 @@ const MYSQL_PORT: u16 = 19930;
 // Server lifecycle management
 // ===========================================================================
 
-struct E2eServer {
-    child: Child,
-    meta_dir: String,
-    data_dir: String,
-}
+// E2eServer, find_binary and make_conn live in the shared
+// `integration_tests::harness` module so a server-side spawn change (e.g.
+// passing --dev for auth) only needs to be made in one place.
+use integration_tests::harness;
 
-impl E2eServer {
-    fn start() -> Self {
-        let pid = std::process::id();
-        let meta_dir = format!("/tmp/harness_e2e_meta_{}", pid);
-        let data_dir = format!("/tmp/harness_e2e_data_{}", pid);
-
-        let _ = std::fs::remove_dir_all(&meta_dir);
-        let _ = std::fs::remove_dir_all(&data_dir);
-
-        std::fs::create_dir_all(&meta_dir).expect("Failed to create meta directory");
-        std::fs::create_dir_all(&data_dir).expect("Failed to create data directory");
-
-        let binary = find_binary();
-        let child = Command::new(&binary)
-            .arg("--mysql-port")
-            .arg(MYSQL_PORT.to_string())
-            .arg("--meta-dir")
-            .arg(&meta_dir)
-            .arg("--data-dir")
-            .arg(&data_dir)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap_or_else(|e| panic!("Failed to start harness-db binary '{}': {}", binary, e));
-
-        E2eServer {
-            child,
-            meta_dir,
-            data_dir,
-        }
-    }
-
-    fn wait_ready(&self) {
-        let start = std::time::Instant::now();
-        let timeout = Duration::from_secs(30);
-        loop {
-            if start.elapsed() > timeout {
-                panic!("Server did not become ready within {:?}", timeout);
-            }
-            if std::net::TcpStream::connect(format!("127.0.0.1:{}", MYSQL_PORT)).is_ok() {
-                thread::sleep(Duration::from_millis(1000));
-                return;
-            }
-            thread::sleep(Duration::from_millis(300));
-        }
-    }
-}
-
-impl Drop for E2eServer {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        let _ = std::fs::remove_dir_all(&self.meta_dir);
-        let _ = std::fs::remove_dir_all(&self.data_dir);
-    }
-}
-
-fn find_binary() -> String {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let candidates = [
-        format!("{}/../../target/release/harness-db", manifest_dir),
-        format!("{}/../../target/debug/harness-db", manifest_dir),
-    ];
-
-    for path in &candidates {
-        if Path::new(path).exists() {
-            return path.to_string();
-        }
-    }
-
-    panic!(
-        "harness-db binary not found. Build with: cargo build --release\n\
-         Expected at one of:\n  {}",
-        candidates.join("\n  ")
-    );
-}
-
-// ===========================================================================
-// Query helpers
-// ===========================================================================
-
-fn make_conn() -> Conn {
-    let opts = OptsBuilder::new()
-        .ip_or_hostname(Some("127.0.0.1"))
-        .tcp_port(MYSQL_PORT)
-        .user(Some("root"))
-        .pass(None::<String>);
-    Conn::new(Opts::from(opts)).expect("Failed to create connection")
+fn make_conn() -> mysql::Conn {
+    harness::make_conn(MYSQL_PORT)
 }
 
 fn exec_sql(conn: &mut Conn, sql: &str) {
@@ -161,8 +70,8 @@ fn get_string(row: &Row, idx: usize) -> String {
 
 #[test]
 fn test_doris_compat_e2e() {
-    let server = E2eServer::start();
-    server.wait_ready();
+    // Keep the server alive for the duration of the test (it is dropped on exit).
+    let _server = harness::shared_server(MYSQL_PORT);
 
     let mut conn = make_conn();
 

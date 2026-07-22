@@ -31,7 +31,7 @@ use elasticsearch_protocol::{ElasticsearchServer, ElasticsearchServerConfig};
 use influxdb_protocol::{InfluxDBServer, InfluxDBServerConfig};
 use maxcompute_protocol::{McServerConfig, start_mc_server};
 use mongodb_protocol::{MongoDBServer, MongoDBServerConfig};
-use mysql_protocol::auth::secure_credentials;
+use mysql_protocol::auth::{default_credentials, secure_credentials};
 use mysql_protocol::server::{ColumnDef, ColumnType};
 use mysql_protocol::{MysqlServer, QueryHandler, QueryResult, ServerConfig, auth::AuthPluginType};
 use pg_protocol::{PgServer, PgServerConfig};
@@ -110,6 +110,13 @@ struct Args {
 
     #[arg(long, default_value = "5000")]
     sybase_tds_port: u16,
+
+    /// Development mode: use insecure default credentials (root with empty
+    /// password) instead of generating a random root password. Intended for
+    /// local development and the integration test suite only. Never enable in
+    /// production.
+    #[arg(long, default_value_t = false)]
+    dev: bool,
 }
 
 impl QueryHandler for HarnessQueryHandler {
@@ -436,8 +443,19 @@ async fn main() -> Result<()> {
     // Create backup manager
     let backup_manager = Arc::new(BackupManager::new(&args.meta_dir, &config.storage.data_dir));
 
-    // Create MySQL credentials (shared between auth and DDL handler)
-    let mysql_credentials = secure_credentials();
+    // Create MySQL credentials (shared between auth and DDL handler).
+    // In --dev mode (or when HARNESS_ROOT_PASSWORD is explicitly empty), use the
+    // insecure default credentials (root with empty password) for local dev and
+    // the integration test suite. Otherwise generate a random root password.
+    let mysql_credentials = if args.dev {
+        tracing::warn!(
+            "Running in --dev mode: MySQL root user accepts an empty password. \
+             Never use this in production."
+        );
+        default_credentials()
+    } else {
+        secure_credentials()
+    };
 
     let query_handler = Arc::new(HarnessQueryHandler::new(
         catalog.clone(),
