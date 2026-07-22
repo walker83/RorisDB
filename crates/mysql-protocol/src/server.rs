@@ -46,6 +46,12 @@ pub struct QueryResult {
     /// Contains all row packets with seq_id=0 placeholders; Connection patches seq_ids in-place.
     pub pre_encoded_rows: Option<BytesMut>,
     pub pre_encoded_row_count: usize,
+    /// Explicit affected-row count for DML statements that do not return a
+    /// result set. When `Some`, the protocol layer uses this value for the
+    /// OK packet's affected_rows field instead of `rows.len()`. This lets a
+    /// handler report how many rows an INSERT/UPDATE/DELETE touched without
+    /// fabricating dummy rows.
+    pub affected_rows: Option<u64>,
 }
 
 /// Column definition for query results.
@@ -75,6 +81,7 @@ impl QueryResult {
             rows: Vec::new(),
             pre_encoded_rows: None,
             pre_encoded_row_count: 0,
+            affected_rows: None,
         }
     }
 
@@ -85,6 +92,7 @@ impl QueryResult {
             rows,
             pre_encoded_rows: None,
             pre_encoded_row_count: 0,
+            affected_rows: None,
         }
     }
 
@@ -95,6 +103,20 @@ impl QueryResult {
             rows: Vec::new(),
             pre_encoded_rows: None,
             pre_encoded_row_count: 0,
+            affected_rows: None,
+        }
+    }
+
+    /// Create an OK-style result carrying an explicit affected-row count for a
+    /// DML statement (INSERT/UPDATE/DELETE). The protocol layer reports this
+    /// count to the client in the OK packet.
+    pub fn ok_with_affected(affected_rows: u64) -> Self {
+        Self {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            pre_encoded_rows: None,
+            pre_encoded_row_count: 0,
+            affected_rows: Some(affected_rows),
         }
     }
 
@@ -109,6 +131,7 @@ impl QueryResult {
             rows: Vec::new(),
             pre_encoded_rows: Some(encoded_rows),
             pre_encoded_row_count: row_count,
+            affected_rows: None,
         }
     }
 }

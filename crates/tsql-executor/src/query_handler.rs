@@ -58,8 +58,8 @@ impl QueryHandler for TsqlQueryHandler {
                 Ok(TsqlExecutionResult::ResultSet(qr)) => {
                     last_result = qr;
                 }
-                Ok(TsqlExecutionResult::RowsAffected(_n)) => {
-                    last_result = QueryResult::ok();
+                Ok(TsqlExecutionResult::RowsAffected(n)) => {
+                    last_result = QueryResult::ok_with_affected(n);
                 }
                 Ok(TsqlExecutionResult::Message(_)) => {
                     // PRINT messages — in TDS these would be InfoMessage tokens

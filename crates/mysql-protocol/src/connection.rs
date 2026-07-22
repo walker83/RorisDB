@@ -649,7 +649,13 @@ impl Connection {
         let send_start = Instant::now();
 
         if result.columns.is_empty() {
-            self.send_ok(result.rows.len() as u64, 0).await?;
+            // DML/DDL with no result set. Prefer an explicit affected_rows
+            // count from the handler (e.g. RowsAffected from the T-SQL
+            // executor); otherwise fall back to rows.len().
+            let affected = result
+                .affected_rows
+                .unwrap_or(result.rows.len() as u64);
+            self.send_ok(affected, 0).await?;
             return Ok(());
         }
 
