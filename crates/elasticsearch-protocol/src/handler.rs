@@ -338,27 +338,47 @@ impl ElasticsearchCommandHandler for DefaultElasticsearchHandler {
                                                 if let Ok(update_val) = serde_json::from_str::<serde_json::Value>(source_line) {
                                                     let id = doc_id.to_string();
                                                     if let Some(doc_obj) = update_val.get("doc").and_then(|v| v.as_object()) {
-                                                        if let Some(existing) = index.get_document(&id) {
-                                                            let mut updated_fields = existing.fields.clone();
-                                                            for (k, v) in doc_obj {
-                                                                updated_fields.insert(k.clone(), v.clone());
+                                                        match index.get_document(&id) {
+                                                            Some(existing) => {
+                                                                let mut updated_fields = existing.fields.clone();
+                                                                for (k, v) in doc_obj {
+                                                                    updated_fields.insert(k.clone(), v.clone());
+                                                                }
+                                                                let updated_doc = Document { fields: updated_fields };
+                                                                index.index_document(id.clone(), updated_doc);
+                                                                items.push(json!({
+                                                                    "update": {
+                                                                        "_index": bulk_index,
+                                                                        "_type": "_doc",
+                                                                        "_id": id,
+                                                                        "_version": 2,
+                                                                        "result": "updated",
+                                                                        "_shards": {"total": 2, "successful": 1, "failed": 0},
+                                                                        "_seq_no": 1,
+                                                                        "_primary_term": 1,
+                                                                        "status": 200
+                                                                    }
+                                                                }));
                                                             }
-                                                            let updated_doc = Document { fields: updated_fields };
-                                                            index.index_document(id.clone(), updated_doc);
+                                                            None => {
+                                                                // Document does not exist: report a
+                                                                // not_found error so callers see the
+                                                                // failure (previously this returned 200).
+                                                                items.push(json!({
+                                                                    "update": {
+                                                                        "_index": bulk_index,
+                                                                        "_type": "_doc",
+                                                                        "_id": id,
+                                                                        "status": 404,
+                                                                        "error": {
+                                                                            "type": "document_missing_exception",
+                                                                            "reason": format!("[{}][{}]: document missing", bulk_index, id),
+                                                                        },
+                                                                        "result": "not_found"
+                                                                    }
+                                                                }));
+                                                            }
                                                         }
-                                                        items.push(json!({
-                                                            "update": {
-                                                                "_index": bulk_index,
-                                                                "_type": "_doc",
-                                                                "_id": id,
-                                                                "_version": 2,
-                                                                "result": "updated",
-                                                                "_shards": {"total": 2, "successful": 1, "failed": 0},
-                                                                "_seq_no": 1,
-                                                                "_primary_term": 1,
-                                                                "status": 200
-                                                            }
-                                                        }));
                                                     }
                                                 }
                                             }
@@ -420,14 +440,15 @@ impl ElasticsearchCommandHandler for DefaultElasticsearchHandler {
                 if let Some(idx) = index {
                     if let Some(body_str) = body {
                         if let Ok(doc) = serde_json::from_str::<HashMap<String, serde_json::Value>>(body_str) {
+                            let existed = idx.get_document(id).is_some();
                             let document = Document { fields: doc };
                             idx.index_document(id.to_string(), document);
                             return json!({
                                 "_index": index_name,
                                 "_type": "_doc",
                                 "_id": id,
-                                "_version": 1,
-                                "result": "created",
+                                "_version": if existed { 2 } else { 1 },
+                                "result": if existed { "updated" } else { "created" },
                                 "_shards": {
                                     "total": 2,
                                     "successful": 1,
@@ -620,5 +641,61 @@ impl ElasticsearchCommandHandler for DefaultElasticsearchHandler {
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn handler_with_index(name: &str) -> DefaultElasticsearchHandler {
+        let storage = Arc::new(ElasticsearchStorage::new());
+        storage.create_index(name);
+        DefaultElasticsearchHandler::new(storage)
+    }
+
+    #[test]
+    fn test_post_doc_existing_id_reports_updated() {
+        let h = handler_with_index("idx");
+        // First POST creates the document.
+        let r1 = h.handle_request("POST", "/idx/_doc/1", Some(r#"{"f":"v1"}"#));
+        assert_eq!(r1["result"], "created");
+        assert_eq!(r1["_version"], 1);
+        // Second POST to the same id must report "updated", not "created".
+        let r2 = h.handle_request("POST", "/idx/_doc/1", Some(r#"{"f":"v2"}"#));
+        assert_eq!(r2["result"], "updated");
+        assert_eq!(r2["_version"], 2);
+    }
+
+    #[test]
+    fn test_bulk_update_missing_document_reports_404() {
+        let h = handler_with_index("idx");
+        // Bulk update on a document that does not exist.
+        let body = concat!(
+            r#"{"update":{"_index":"idx","_id":"nope"}}"#, "\n",
+            r#"{"doc":{"field":"x"}}"#, "\n"
+        );
+        let r = h.handle_request("POST", "/idx/_bulk", Some(body));
+        // errors must be true and the item status must be 404.
+        assert_eq!(r["errors"], true);
+        let item = &r["items"][0]["update"];
+        assert_eq!(item["status"], 404);
+        assert_eq!(item["result"], "not_found");
+    }
+
+    #[test]
+    fn test_bulk_update_existing_document_reports_200() {
+        let h = handler_with_index("idx");
+        // Index a document first.
+        h.handle_request("PUT", "/idx/_doc/1", Some(r#"{"f":"v1"}"#));
+        let body = concat!(
+            r#"{"update":{"_index":"idx","_id":"1"}}"#, "\n",
+            r#"{"doc":{"f":"v2"}}"#, "\n"
+        );
+        let r = h.handle_request("POST", "/idx/_bulk", Some(body));
+        assert_eq!(r["errors"], false);
+        let item = &r["items"][0]["update"];
+        assert_eq!(item["status"], 200);
+        assert_eq!(item["result"], "updated");
     }
 }
