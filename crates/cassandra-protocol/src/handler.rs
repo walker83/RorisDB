@@ -20,16 +20,48 @@ fn build_void_result(stream: i16) -> Vec<u8> {
     buf.to_vec()
 }
 
-/// Build a RESULT frame with ROWS result kind (for SELECT)
+/// Build a RESULT frame with ROWS result kind (for SELECT).
+///
+/// Follows the CQL v4 `Result` → `Rows` frame layout, which requires a full
+/// Metadata section before the row count and row data. Previously this emitted
+/// `[kind][col_count][row_count][rows]`, omitting Metadata entirely and
+/// breaking any client that parses columns/types from the result.
+///
+/// Layout produced:
+///   [int]  result kind (0x0002 = Rows)
+///   Metadata:
+///     [int]     flags (0 — no global table spec, no paging)
+///     [int]     column count
+///     per column: [string] name + [ushort] type opcode
+///   [int]  row count
+///   row data: per cell [int length][bytes] (length -1 = NULL)
+///
+/// All values are reported as `VARCHAR` (0x000D) because the storage layer
+/// holds everything as strings; the type opcode only needs to be self-
+/// consistent for clients to read the cells.
 fn build_rows_result(stream: i16, columns: &[&str], rows: &[Vec<String>]) -> Vec<u8> {
     let mut body = Vec::new();
     // Result kind = ROWS (0x0002)
     body.extend_from_slice(&0x0000_0002u32.to_be_bytes());
-    // Column count (i32)
+
+    // --- Metadata ---
+    // Flags: 0 (no GlobalTablesSpec, so no keyspace/table_name preceding columns)
+    body.extend_from_slice(&0x0000_0000u32.to_be_bytes());
+    // Column count
     body.extend_from_slice(&(columns.len() as i32).to_be_bytes());
-    // Row count (i32)
+    // Per-column spec: [string name][ushort type]. [string] = [ushort len][bytes].
+    const TYPE_VARCHAR: u16 = 0x000D;
+    for col in columns {
+        let name_bytes = col.as_bytes();
+        body.extend_from_slice(&(name_bytes.len() as u16).to_be_bytes());
+        body.extend_from_slice(name_bytes);
+        body.extend_from_slice(&TYPE_VARCHAR.to_be_bytes());
+    }
+
+    // --- Row count ---
     body.extend_from_slice(&(rows.len() as i32).to_be_bytes());
-    // Row data: each cell is [i32 length][bytes]
+
+    // --- Row data: each cell is [int length][bytes] ---
     for row in rows {
         for val in row {
             let val_bytes = val.as_bytes();
@@ -408,5 +440,92 @@ fn extract_select_columns<'a>(cql: &'a str, upper: &str) -> Vec<&'a str> {
         vec!["col"]
     } else {
         cols
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::Opcode;
+
+    /// Decode a be u32 at `bytes[offset..offset+4]` and advance offset.
+    fn take_u32(bytes: &[u8], offset: &mut usize) -> u32 {
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(&bytes[*offset..*offset + 4]);
+        *offset += 4;
+        u32::from_be_bytes(buf)
+    }
+
+    fn take_u16(bytes: &[u8], offset: &mut usize) -> u16 {
+        let mut buf = [0u8; 2];
+        buf.copy_from_slice(&bytes[*offset..*offset + 2]);
+        *offset += 2;
+        u16::from_be_bytes(buf)
+    }
+
+    fn take_string(bytes: &[u8], offset: &mut usize) -> String {
+        let len = take_u16(bytes, offset) as usize;
+        let s = String::from_utf8_lossy(&bytes[*offset..*offset + len]).into_owned();
+        *offset += len;
+        s
+    }
+
+    /// Read a cell value: `[i32 length][length bytes]` (CQL row cell format).
+    fn take_cell(bytes: &[u8], offset: &mut usize) -> String {
+        let len = take_u32(bytes, &mut *offset) as i32;
+        if len < 0 {
+            return String::new(); // NULL
+        }
+        let len = len as usize;
+        let s = String::from_utf8_lossy(&bytes[*offset..*offset + len]).into_owned();
+        *offset += len;
+        s
+    }
+
+    #[test]
+    fn test_rows_result_contains_metadata_section() {
+        let cols = ["id", "name"];
+        let rows = vec![vec!["1".to_string(), "alice".to_string()]];
+        let frame_bytes = build_rows_result(7, &cols, &rows);
+
+        // Strip the 9-byte CQL frame header to inspect the body.
+        // Header: [u8 version][u8 flags][i16 stream][u8 opcode][i32 length]
+        assert_eq!(frame_bytes[0], 0x84); // response, v4
+        assert_eq!(frame_bytes[4], Opcode::Result as u8);
+        let body = &frame_bytes[9..];
+        let mut off = 0;
+
+        // Result kind = ROWS (0x0002)
+        assert_eq!(take_u32(body, &mut off), 0x0002);
+        // Metadata flags = 0 (no global table spec, no paging)
+        assert_eq!(take_u32(body, &mut off), 0x0000_0000);
+        // Column count = 2
+        assert_eq!(take_u32(body, &mut off), 2);
+        // Column 1: name "id" + type VARCHAR (0x000D)
+        assert_eq!(take_string(body, &mut off), "id");
+        assert_eq!(take_u16(body, &mut off), 0x000D);
+        // Column 2: name "name" + type VARCHAR
+        assert_eq!(take_string(body, &mut off), "name");
+        assert_eq!(take_u16(body, &mut off), 0x000D);
+        // Row count = 1
+        assert_eq!(take_u32(body, &mut off), 1);
+        // First cell: "1" — [int length][bytes]
+        assert_eq!(take_cell(body, &mut off), "1");
+        // Second cell: "alice"
+        assert_eq!(take_cell(body, &mut off), "alice");
+    }
+
+    #[test]
+    fn test_rows_result_empty_rows_still_has_metadata() {
+        let cols = ["a"];
+        let frame_bytes = build_rows_result(1, &cols, &[]);
+        let body = &frame_bytes[9..];
+        let mut off = 0;
+        assert_eq!(take_u32(body, &mut off), 0x0002);
+        assert_eq!(take_u32(body, &mut off), 0); // flags
+        assert_eq!(take_u32(body, &mut off), 1); // column count
+        assert_eq!(take_string(body, &mut off), "a");
+        assert_eq!(take_u16(body, &mut off), 0x000D); // type
+        assert_eq!(take_u32(body, &mut off), 0); // row count
     }
 }
