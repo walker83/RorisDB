@@ -15,8 +15,8 @@ use tracing::{debug, error, info, warn};
 use crate::auth::{AuthConfig, generate_salt, validate_password};
 use crate::message::{
     BackendMessage, CANCEL_REQUEST_CODE, DescribeTarget, FieldDescription, FrontendMessage,
-    OID_BOOL, OID_DATE, OID_FLOAT4, OID_FLOAT8, OID_INT4, OID_TEXT, OID_TIMESTAMP,
-    PG_PROTOCOL_VERSION_3, PgProtocolError, SSL_REQUEST_CODE, TransactionStatus,
+    OID_BOOL, OID_DATE, OID_FLOAT4, OID_FLOAT8, OID_INT2, OID_INT4, OID_INT8, OID_TEXT,
+    OID_TIMESTAMP, PG_PROTOCOL_VERSION_3, PgProtocolError, SSL_REQUEST_CODE, TransactionStatus,
     create_error_response, sqlstate,
 };
 use mysql_protocol::server::{ColumnType, QueryHandler, QueryResult};
@@ -32,12 +32,19 @@ struct PreparedStatement {
     fields: Vec<FieldDescription>,
 }
 
+/// A bound portal: the prepared statement name plus the parameter values
+/// supplied at Bind time, decoded to text form for `$N` substitution.
+struct Portal {
+    stmt_name: String,
+    params: Vec<Option<String>>,
+}
+
 /// Session state for a single PG connection.
 struct SessionState {
     database: String,
     username: String,
     prepared_statements: HashMap<String, PreparedStatement>,
-    portals: HashMap<String, String>,
+    portals: HashMap<String, Portal>,
     _start_time: Instant,
 }
 
@@ -315,9 +322,14 @@ impl PgConnection {
                     self.handle_parse(&name, &query, &param_types).await;
                 }
                 FrontendMessage::Bind {
-                    portal, statement, ..
+                    portal,
+                    statement,
+                    formats,
+                    values,
+                    result_formats: _,
                 } => {
-                    self.handle_bind(&portal, &statement).await;
+                    self.handle_bind(&portal, &statement, &formats, &values)
+                        .await;
                 }
                 FrontendMessage::Describe { target, name } => {
                     self.handle_describe(target, &name).await;
@@ -436,7 +448,13 @@ impl PgConnection {
         }
     }
 
-    async fn handle_bind(&mut self, portal: &str, statement: &str) {
+    async fn handle_bind(
+        &mut self,
+        portal: &str,
+        statement: &str,
+        formats: &[i16],
+        values: &[Option<Vec<u8>>],
+    ) {
         let portal_name = if portal.is_empty() {
             format!("_pg3_portal_{}", self.conn_id)
         } else {
@@ -469,7 +487,34 @@ impl PgConnection {
             return;
         }
 
-        self.session.portals.insert(portal_name, stmt_name);
+        // Decode each bound parameter value to its text representation so it
+        // can be substituted into the prepared SQL's $N placeholders. The
+        // format codes apply per-parameter: a single-element vector sets the
+        // default for all, otherwise the i-th code applies to the i-th value.
+        let param_types = self
+            .session
+            .prepared_statements
+            .get(&stmt_name)
+            .map(|s| s.param_types.clone())
+            .unwrap_or_default();
+        let params: Vec<Option<String>> = values
+            .iter()
+            .enumerate()
+            .map(|(i, value)| {
+                value.as_ref().map(|bytes| {
+                    let fmt = if formats.len() == 1 {
+                        formats[0]
+                    } else {
+                        formats.get(i).copied().unwrap_or(0)
+                    };
+                    decode_param_value(bytes, fmt, param_types.get(i).copied().map(|t| t as i32))
+                })
+            })
+            .collect();
+
+        self.session
+            .portals
+            .insert(portal_name, Portal { stmt_name, params });
         BackendMessage::BindComplete.encode(&mut self.write_buf);
         if let Err(e) = self.flush_write().await {
             error!(
@@ -553,7 +598,11 @@ impl PgConnection {
                 } else {
                     name.to_string()
                 };
-                let stmt_name = self.session.portals.get(&portal_name).cloned();
+                let stmt_name = self
+                    .session
+                    .portals
+                    .get(&portal_name)
+                    .map(|p| p.stmt_name.clone());
                 let cached_fields = stmt_name
                     .as_ref()
                     .and_then(|sn| self.session.prepared_statements.get(sn))
@@ -631,9 +680,9 @@ impl PgConnection {
             portal.to_string()
         };
 
-        // Look up the statement name for this portal
-        let stmt_name = match self.session.portals.get(&portal_name) {
-            Some(name) => name.clone(),
+        // Look up the statement name and bound parameters for this portal
+        let (stmt_name, params) = match self.session.portals.get(&portal_name) {
+            Some(portal) => (portal.stmt_name.clone(), portal.params.clone()),
             None => {
                 error!(
                     "PG conn {}: portal '{}' not found",
@@ -646,7 +695,9 @@ impl PgConnection {
                 )
                 .encode(&mut self.write_buf);
                 self.flush_write().await.ok();
-                self.send_ready_for_query().await.ok();
+                // Per the extended-query protocol, ReadyForQuery is sent only
+                // after the client's Sync — not here. Sending it now would make
+                // a compliant client receive a duplicate 'Z' after its Sync.
                 return;
             }
         };
@@ -666,16 +717,19 @@ impl PgConnection {
                 )
                 .encode(&mut self.write_buf);
                 self.flush_write().await.ok();
-                self.send_ready_for_query().await.ok();
+                // ReadyForQuery is sent by the Sync handler, not here (see above).
                 return;
             }
         };
 
+        // Substitute $N placeholders with the bound parameter values.
+        let substituted = substitute_params(&sql, &params);
         // Execute the query
-        let trimmed = sql.trim().trim_end_matches(';');
+        let trimmed = substituted.trim().trim_end_matches(';');
         if trimmed.is_empty() {
             BackendMessage::EmptyQueryResponse.encode(&mut self.write_buf);
-            self.send_ready_for_query().await.ok();
+            self.flush_write().await.ok();
+            // ReadyForQuery is sent by the Sync handler, not here.
             return;
         }
 
@@ -820,6 +874,162 @@ impl PgConnection {
 ///
 /// In PG protocol, only row-returning queries get RowDescription + DataRow.
 /// DML (INSERT/UPDATE/DELETE) and DDL only get CommandComplete.
+/// Decode a single bound parameter value to its text representation.
+///
+/// `format` is 0 for text and 1 for binary (per the Bind message). For text
+/// format the bytes are already the textual form and are returned as-is. For
+/// binary format the value is decoded according to the parameter's type OID.
+fn decode_param_value(bytes: &[u8], format: i16, type_oid: Option<i32>) -> String {
+    if format == 0 {
+        // Text format: the bytes are already the textual representation.
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+    // Binary format: decode by type OID. Unknown/unset OID falls back to a
+    // lossy UTF-8 interpretation, which is correct for text-like types.
+    match type_oid {
+        Some(OID_BOOL) => match bytes.first() {
+            Some(0) => "false".to_string(),
+            Some(_) => "true".to_string(),
+            None => "false".to_string(),
+        },
+        Some(OID_INT2) => bytes
+            .try_into()
+            .ok()
+            .map(|b: [u8; 2]| i16::from_be_bytes(b).to_string())
+            .unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned()),
+        Some(OID_INT4) => bytes
+            .try_into()
+            .ok()
+            .map(|b: [u8; 4]| i32::from_be_bytes(b).to_string())
+            .unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned()),
+        Some(OID_INT8) => bytes
+            .try_into()
+            .ok()
+            .map(|b: [u8; 8]| i64::from_be_bytes(b).to_string())
+            .unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned()),
+        Some(OID_FLOAT4) => bytes
+            .try_into()
+            .ok()
+            .map(|b: [u8; 4]| f32::from_be_bytes(b).to_string())
+            .unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned()),
+        Some(OID_FLOAT8) => bytes
+            .try_into()
+            .ok()
+            .map(|b: [u8; 8]| f64::from_be_bytes(b).to_string())
+            .unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned()),
+        _ => String::from_utf8_lossy(bytes).into_owned(),
+    }
+}
+
+/// Substitute PostgreSQL `$N` positional parameters with their bound values.
+///
+/// `params` is 1-indexed by position: `params[0]` is `$1`. Placeholders are
+/// only substituted outside of single-quoted string literals, double-quoted
+/// identifiers, and line comments, so a literal `$1` inside a string is left
+/// untouched. `NULL` is substituted for parameters that are `None`.
+///
+/// To avoid SQL injection through the downstream text-based query path,
+/// string values are wrapped in single quotes with any embedded single quote
+/// doubled (`'` -> `''`), matching PostgreSQL string-literal syntax. Numeric
+/// values are emitted bare.
+fn substitute_params(sql: &str, params: &[Option<String>]) -> String {
+    if params.is_empty() {
+        return sql.to_string();
+    }
+    let bytes = sql.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(sql.len() + params.len() * 8);
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        match c {
+            b'\'' => {
+                // Single-quoted string literal: copy verbatim including the
+                // closing quote. A doubled '' inside is an escaped quote.
+                out.push(b'\'');
+                i += 1;
+                while i < bytes.len() {
+                    out.push(bytes[i]);
+                    if bytes[i] == b'\'' {
+                        i += 1;
+                        if i < bytes.len() && bytes[i] == b'\'' {
+                            // Escaped quote — keep copying.
+                            continue;
+                        }
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            b'"' => {
+                // Double-quoted identifier: copy verbatim to closing quote.
+                out.push(b'"');
+                i += 1;
+                while i < bytes.len() {
+                    out.push(bytes[i]);
+                    if bytes[i] == b'"' {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            b'-' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
+                // Line comment: copy to end of line verbatim.
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    out.push(bytes[i]);
+                    i += 1;
+                }
+            }
+            b'$' if i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() => {
+                let mut j = i + 1;
+                let mut n: usize = 0;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    n = n * 10 + (bytes[j] - b'0') as usize;
+                    j += 1;
+                }
+                if n >= 1 && n <= params.len() {
+                    match &params[n - 1] {
+                        Some(value) => {
+                            if is_numeric_literal(value) {
+                                out.extend_from_slice(value.as_bytes());
+                            } else {
+                                out.push(b'\'');
+                                for &b in value.as_bytes() {
+                                    if b == b'\'' {
+                                        out.push(b'\'');
+                                    }
+                                    out.push(b);
+                                }
+                                out.push(b'\'');
+                            }
+                        }
+                        None => out.extend_from_slice(b"NULL"),
+                    }
+                    i = j;
+                } else {
+                    // Not a valid parameter reference — copy the '$' and continue.
+                    out.push(b'$');
+                    i += 1;
+                }
+            }
+            _ => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    // The output is a mix of the original (valid UTF-8) SQL bytes and
+    // parameter bytes that were themselves decoded from UTF-8/text format or
+    // rendered from numbers, so the whole buffer is valid UTF-8.
+    String::from_utf8(out).unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).into_owned())
+}
+
+/// Heuristic: emit a value bare (numeric) only if it parses as an i64 or f64,
+/// so it does not need quoting. Everything else is quoted as a string literal.
+fn is_numeric_literal(value: &str) -> bool {
+    value.parse::<i64>().is_ok() || value.parse::<f64>().is_ok()
+}
+
 fn is_row_returning_query(sql: &str) -> bool {
     let upper = sql.trim().to_uppercase();
     // SELECT INTO creates a table, doesn't return rows
@@ -953,6 +1163,104 @@ mod tests {
     #[test]
     fn test_infer_command_tag_select() {
         assert_eq!(infer_command_tag("SELECT * FROM t", 5), "SELECT 5");
+    }
+
+    #[test]
+    fn test_substitute_params_numeric() {
+        let params = vec![Some("42".to_string()), Some("3.14".to_string())];
+        let out = substitute_params("SELECT $1 + $2", &params);
+        assert_eq!(out, "SELECT 42 + 3.14");
+    }
+
+    #[test]
+    fn test_substitute_params_string_is_quoted() {
+        // Non-numeric values are quoted with '' escaping to prevent injection.
+        let params = vec![Some("O'Brien".to_string())];
+        let out = substitute_params("SELECT $1", &params);
+        assert_eq!(out, "SELECT 'O''Brien'");
+    }
+
+    #[test]
+    fn test_substitute_params_null() {
+        let params = vec![None];
+        let out = substitute_params("INSERT INTO t VALUES ($1)", &params);
+        assert_eq!(out, "INSERT INTO t VALUES (NULL)");
+    }
+
+    #[test]
+    fn test_substitute_params_ignores_placeholder_in_string() {
+        let params = vec![Some("42".to_string())];
+        // A $1 appearing inside a string literal must not be substituted.
+        let out = substitute_params("SELECT '$1' AS lit, $1 AS val", &params);
+        assert_eq!(out, "SELECT '$1' AS lit, 42 AS val");
+    }
+
+    #[test]
+    fn test_substitute_params_ignores_double_quoted_identifier() {
+        let params = vec![Some("42".to_string())];
+        let out = substitute_params("SELECT \"$1col\", $1", &params);
+        assert_eq!(out, "SELECT \"$1col\", 42");
+    }
+
+    #[test]
+    fn test_substitute_params_ignores_line_comment() {
+        let params = vec![Some("42".to_string())];
+        let out = substitute_params("SELECT $1 -- $2 is commented\n", &params);
+        assert_eq!(out, "SELECT 42 -- $2 is commented\n");
+    }
+
+    #[test]
+    fn test_substitute_params_out_of_range_left_alone() {
+        let params = vec![Some("42".to_string())];
+        // $2 has no bound value — left untouched.
+        let out = substitute_params("SELECT $1, $2", &params);
+        assert_eq!(out, "SELECT 42, $2");
+    }
+
+    #[test]
+    fn test_substitute_params_no_params_is_noop() {
+        let out = substitute_params("SELECT 1", &[]);
+        assert_eq!(out, "SELECT 1");
+    }
+
+    #[test]
+    fn test_substitute_params_utf8_preserved() {
+        let params = vec![Some("héllo".to_string())];
+        let out = substitute_params("SELECT $1", &params);
+        assert_eq!(out, "SELECT 'héllo'");
+    }
+
+    #[test]
+    fn test_decode_param_value_text() {
+        assert_eq!(decode_param_value(b"42", 0, None), "42");
+        assert_eq!(
+            decode_param_value("héllo".as_bytes(), 0, None),
+            "héllo"
+        );
+    }
+
+    #[test]
+    fn test_decode_param_value_binary_int4() {
+        let bytes = 12345i32.to_be_bytes();
+        assert_eq!(decode_param_value(&bytes, 1, Some(OID_INT4)), "12345");
+    }
+
+    #[test]
+    fn test_decode_param_value_binary_int8() {
+        let bytes = (-9_000_000_000i64).to_be_bytes();
+        assert_eq!(decode_param_value(&bytes, 1, Some(OID_INT8)), "-9000000000");
+    }
+
+    #[test]
+    fn test_decode_param_value_binary_bool() {
+        assert_eq!(decode_param_value(&[1u8], 1, Some(OID_BOOL)), "true");
+        assert_eq!(decode_param_value(&[0u8], 1, Some(OID_BOOL)), "false");
+    }
+
+    #[test]
+    fn test_decode_param_value_binary_float8() {
+        let bytes = 3.5f64.to_be_bytes();
+        assert_eq!(decode_param_value(&bytes, 1, Some(OID_FLOAT8)), "3.5");
     }
 
     #[test]
@@ -1691,9 +1999,11 @@ mod tests {
             error_str
         );
 
-        // ReadyForQuery should follow (handle_execute sends it after error)
+        // Per the extended-query protocol, ReadyForQuery is sent only after
+        // the client sends Sync — not immediately after the ErrorResponse.
+        writer.write_all(&build_sync_message()).await.unwrap();
         let (msg_type, _body) = read_pg_message(&mut reader).await;
-        assert_eq!(msg_type, b'Z', "expected ReadyForQuery after execute error");
+        assert_eq!(msg_type, b'Z', "expected ReadyForQuery after execute error + Sync");
     }
 
     #[tokio::test]
@@ -1761,6 +2071,8 @@ mod tests {
             msg_type
         );
 
+        // ReadyForQuery arrives only after Sync (extended-query protocol).
+        writer.write_all(&build_sync_message()).await.unwrap();
         let (msg_type, _body) = read_pg_message(&mut reader).await;
         assert_eq!(msg_type, b'Z');
     }
