@@ -70,7 +70,25 @@ impl VectorCollection {
             })
             .collect();
 
-        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        // Sort by similarity descending. `partial_cmp` returns None when a
+        // similarity is NaN (e.g. cosine similarity of a NaN-valued vector),
+        // which previously panicked via `.unwrap()` on client-controllable
+        // input. We treat NaN as least-similar so it sorts to the end and
+        // never crashes the sort.
+        results.sort_by(|a, b| {
+            let sa = a.1;
+            let sb = b.1;
+            // NaN is "smaller" than any real value for ranking purposes.
+            match (sa.is_nan(), sb.is_nan()) {
+                (true, true) => std::cmp::Ordering::Equal,
+                (true, false) => std::cmp::Ordering::Greater, // a after b
+                (false, true) => std::cmp::Ordering::Less,    // a before b
+                (false, false) => {
+                    // Descending: higher similarity first.
+                    sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+                }
+            }
+        });
         results.truncate(top_k);
         results
     }
@@ -94,4 +112,36 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
 
     dot_product / (norm_a * norm_b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_search_with_nan_vector_does_not_panic() {
+        // A stored vector containing NaN yields NaN cosine similarity, which
+        // previously made the sort_by `.unwrap()` panic. The sort must now be
+        // NaN-safe.
+        let coll = VectorCollection::new(2);
+        coll.insert(
+            "nan_vec",
+            vec![f32::NAN, f32::NAN],
+            String::new(),
+        );
+        coll.insert("good", vec![1.0, 0.0], String::new());
+        let results = coll.search(&[1.0, 0.0], 2);
+        // Must return without panicking; the good vector should rank first.
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, "good");
+    }
+
+    #[test]
+    fn test_search_basic_ordering() {
+        let coll = VectorCollection::new(2);
+        coll.insert("a", vec![1.0, 0.0], String::new());
+        coll.insert("b", vec![0.0, 1.0], String::new());
+        let results = coll.search(&[1.0, 0.0], 2);
+        assert_eq!(results[0].0, "a");
+    }
 }

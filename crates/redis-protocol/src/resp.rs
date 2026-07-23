@@ -162,9 +162,12 @@ impl RespParser {
             None => return Ok(None),    // Can't even measure yet
         }
 
-        // Now parse for real (all data is guaranteed to be available)
-        // Find the count line
-        let newline_pos = Self::find_crlf(buf, 1).unwrap();
+        // Now parse for real (all data is guaranteed to be available).
+        // Find the count line. `find_crlf` should always succeed here because
+        // `measure_value` already verified the frame is complete, but a bug in
+        // that function must not turn a malformed packet into a panic.
+        let newline_pos = Self::find_crlf(buf, 1)
+            .ok_or(RespError::InvalidData)?;
 
         let count_str = std::str::from_utf8(&buf[1..newline_pos])
             .map_err(|_| RespError::InvalidData)?;

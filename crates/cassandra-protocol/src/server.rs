@@ -107,7 +107,7 @@ async fn handle_connection(
             match opcode {
                 Some(Opcode::Startup) => {
                     info!("Received STARTUP");
-                    let response = handler.handle_startup();
+                    let response = handler.handle_startup(frame.header.stream);
                     stream.write_all(&response).await?;
                     stream.flush().await?;
                 }
@@ -136,8 +136,8 @@ async fn handle_connection(
                     };
                     info!("Received CQL: {}", cql);
 
-                    // Execute query
-                    let response = handler.handle_query(&mut keyspace, &cql);
+                    // Execute query, echoing the request frame's stream ID.
+                    let response = handler.handle_query(&mut keyspace, &cql, frame.header.stream);
                     stream.write_all(&response).await?;
                     stream.flush().await?;
                 }

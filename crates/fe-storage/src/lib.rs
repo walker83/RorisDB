@@ -101,16 +101,20 @@ impl ParquetStorage {
     /// Acquire the per-table write lock. Returns a guard that releases on drop.
     fn lock_table(&self, db: &str, table: &str) -> TableWriteGuard {
         let key = format!("{}.{}", db, table);
-        // Fast path: read lock to get the Arc, then drop the read lock
+        // Fast path: read lock to get the Arc, then drop the read lock.
+        // Use poisoning-aware access so a panicked writer elsewhere does not
+        // cascade into crashing every subsequent write to any table; the
+        // connection-level catch_unwind boundary contains the blast radius
+        // but the map itself stays usable.
         let lock = {
-            let locks = self.write_locks.read().unwrap();
+            let locks = self.write_locks.read().unwrap_or_else(|e| e.into_inner());
             locks.get(&key).cloned()
         };
         let lock = match lock {
             Some(l) => l,
             None => {
                 // Slow path: create under write lock
-                let mut locks = self.write_locks.write().unwrap();
+                let mut locks = self.write_locks.write().unwrap_or_else(|e| e.into_inner());
                 locks
                     .entry(key)
                     .or_insert_with(|| Arc::new(Mutex::new(())))

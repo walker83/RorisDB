@@ -6,8 +6,12 @@ use std::sync::Arc;
 
 /// Trait for handling Cassandra commands
 pub trait CassandraCommandHandler: Send + Sync {
-    fn handle_startup(&self) -> Vec<u8>;
-    fn handle_query(&self, keyspace: &mut String, cql: &str) -> Vec<u8>;
+    /// Handle a STARTUP request. `stream` is the request frame's stream ID and
+    /// MUST be echoed back in the READY response so the client can match it.
+    fn handle_startup(&self, stream: i16) -> Vec<u8>;
+    /// Handle a QUERY request. `stream` is the request frame's stream ID and
+    /// MUST be echoed back in the response.
+    fn handle_query(&self, keyspace: &mut String, cql: &str, stream: i16) -> Vec<u8>;
 }
 
 /// Build a RESULT frame with VOID result kind (for DDL, INSERT, UPDATE, DELETE)
@@ -115,18 +119,17 @@ impl DefaultCassandraHandler {
 }
 
 impl CassandraCommandHandler for DefaultCassandraHandler {
-    fn handle_startup(&self) -> Vec<u8> {
-        // Return READY frame (version 0x84 = response v4)
-        let frame = Frame::new(0x84, 0, Opcode::Ready, vec![]);
+    fn handle_startup(&self, stream: i16) -> Vec<u8> {
+        // Return READY frame, echoing the client's stream ID. (version 0x84 = response v4)
+        let frame = Frame::new(0x84, stream, Opcode::Ready, vec![]);
         let mut buf = bytes::BytesMut::new();
         frame.encode(&mut buf);
         buf.to_vec()
     }
 
-    fn handle_query(&self, keyspace: &mut String, cql: &str) -> Vec<u8> {
+    fn handle_query(&self, keyspace: &mut String, cql: &str, stream: i16) -> Vec<u8> {
         let cql_trimmed = cql.trim().trim_end_matches(';');
         let upper = cql_trimmed.to_uppercase();
-        let stream: i16 = 0;
 
         // SELECT queries
         if upper.starts_with("SELECT") {
@@ -256,7 +259,11 @@ impl DefaultCassandraHandler {
 
         // SELECT COUNT(*)
         if upper.contains("COUNT(*)") && upper.contains("FROM ") {
-            let from_idx = upper.find("FROM ").unwrap();
+            // `.find` is guarded by the `contains` check above, but we still
+            // avoid `.unwrap()` on client-supplied input.
+            let Some(from_idx) = upper.find("FROM ") else {
+                return build_error_frame(stream, 0x2200, "Malformed SELECT: missing FROM");
+            };
             let after_from = &cql[from_idx + 5..].trim();
             let table_part = after_from.split_whitespace().next().unwrap_or("unknown");
             let (ks, table) = parse_table_name(table_part, keyspace);
@@ -275,7 +282,9 @@ impl DefaultCassandraHandler {
 
         // Generic SELECT from user tables
         if upper.contains("FROM ") {
-            let from_idx = upper.find("FROM ").unwrap();
+            let Some(from_idx) = upper.find("FROM ") else {
+                return build_error_frame(stream, 0x2200, "Malformed SELECT: missing FROM");
+            };
             let after_from = &cql[from_idx + 5..].trim();
             let table_part = after_from
                 .split_whitespace()
@@ -480,6 +489,30 @@ mod tests {
         let s = String::from_utf8_lossy(&bytes[*offset..*offset + len]).into_owned();
         *offset += len;
         s
+    }
+
+    #[test]
+    fn test_handle_startup_echoes_stream_id() {
+        let storage = Arc::new(CassandraStorage::new());
+        let handler = DefaultCassandraHandler::new(storage);
+        // stream id is header bytes [2..4] as i16 BE.
+        let frame_bytes = handler.handle_startup(42);
+        assert_eq!(frame_bytes[0], 0x84); // response v4
+        assert_eq!(frame_bytes[4], Opcode::Ready as u8);
+        let stream = i16::from_be_bytes([frame_bytes[2], frame_bytes[3]]);
+        assert_eq!(stream, 42, "READY response must echo the request stream id");
+    }
+
+    #[test]
+    fn test_handle_query_echoes_stream_id() {
+        let storage = Arc::new(CassandraStorage::new());
+        storage.create_keyspace("ks");
+        let handler = DefaultCassandraHandler::new(storage);
+        let mut keyspace = "ks".to_string();
+        let frame_bytes = handler.handle_query(&mut keyspace, "SELECT * FROM ks.t", 123);
+        // Result opcode (0x08) regardless of row/error, stream must be echoed.
+        let stream = i16::from_be_bytes([frame_bytes[2], frame_bytes[3]]);
+        assert_eq!(stream, 123, "query response must echo the request stream id");
     }
 
     #[test]
