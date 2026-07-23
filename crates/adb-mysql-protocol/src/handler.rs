@@ -587,6 +587,59 @@ impl AdbMysqlHandler {
                 }
                 _ => false, // Unknown operator — reject row
             },
+            // [NOT] IN (val1, val2, ...) — membership test.
+            Expr::InList { expr, list, negated } => {
+                let v = self.eval_expr_value(expr, row, columns);
+                let matched = list
+                    .iter()
+                    .any(|e| self.eval_expr_value(e, row, columns) == v);
+                matched != *negated
+            }
+            // <expr> [NOT] BETWEEN <low> AND <high>
+            Expr::Between {
+                expr,
+                negated,
+                low,
+                high,
+            } => {
+                let v = self.eval_expr_value(expr, row, columns);
+                let lo = self.eval_expr_value(low, row, columns);
+                let hi = self.eval_expr_value(high, row, columns);
+                // v >= lo AND v <= hi
+                let ge_lo = matches!(
+                    compare_string_values(&v, &lo),
+                    Some(std::cmp::Ordering::Greater) | Some(std::cmp::Ordering::Equal)
+                );
+                let le_hi = matches!(
+                    compare_string_values(&v, &hi),
+                    Some(std::cmp::Ordering::Less) | Some(std::cmp::Ordering::Equal)
+                );
+                let in_range = ge_lo && le_hi;
+                in_range != *negated
+            }
+            // [NOT] LIKE <pattern> — MySQL default is case-insensitive.
+            Expr::Like {
+                negated,
+                expr,
+                pattern,
+                ..
+            } => {
+                let v = self.eval_expr_value(expr, row, columns);
+                let p = self.eval_expr_value(pattern, row, columns);
+                let matched = like_match(&v, &p);
+                matched != *negated
+            }
+            Expr::ILike {
+                negated,
+                expr,
+                pattern,
+                ..
+            } => {
+                let v = self.eval_expr_value(expr, row, columns);
+                let p = self.eval_expr_value(pattern, row, columns);
+                let matched = like_match(&v, &p);
+                matched != *negated
+            }
             _ => false,
         }
     }
@@ -1011,6 +1064,61 @@ where
     }
 }
 
+/// Match a value against an SQL LIKE pattern (MySQL semantics).
+///
+/// `%` matches any sequence of characters (including empty), `_` matches any
+/// single character, and any other character matches itself. Matching is
+/// case-insensitive (MySQL's default collation). There is no escape handling
+/// for backslashes here because the parser already resolved literal pattern
+/// strings; a literal `%`/`_` in the pattern is always a wildcard.
+fn like_match(value: &str, pattern: &str) -> bool {
+    let v: Vec<char> = value.chars().flat_map(|c| c.to_lowercase()).collect();
+    let p: Vec<char> = pattern.chars().flat_map(|c| c.to_lowercase()).collect();
+    like_match_inner(&v, 0, &p, 0)
+}
+
+/// Recursive LIKE matcher. Tries to consume the value against the pattern;
+/// `%` greedily tries every split point so it matches the longest prefix that
+/// lets the rest succeed. Complexity is O(|v|*|p|) worst case, acceptable for
+/// typical WHERE clauses.
+fn like_match_inner(v: &[char], vi: usize, p: &[char], pi: usize) -> bool {
+    if pi == p.len() {
+        return vi == v.len();
+    }
+    match p[pi] {
+        // '%' matches zero or more characters.
+        '%' => {
+            // Skip consecutive % (they are equivalent to a single %).
+            let mut next_pi = pi;
+            while next_pi < p.len() && p[next_pi] == '%' {
+                next_pi += 1;
+            }
+            // Try every possible consumption length for the run of '%'.
+            for skip in vi..=v.len() {
+                if like_match_inner(v, skip, p, next_pi) {
+                    return true;
+                }
+            }
+            false
+        }
+        // '_' matches exactly one character.
+        '_' => {
+            if vi < v.len() {
+                like_match_inner(v, vi + 1, p, pi + 1)
+            } else {
+                false
+            }
+        }
+        c => {
+            if vi < v.len() && v[vi] == c {
+                like_match_inner(v, vi + 1, p, pi + 1)
+            } else {
+                false
+            }
+        }
+    }
+}
+
 fn compare_string_values(a: &str, b: &str) -> Option<std::cmp::Ordering> {
     if let (Ok(na), Ok(nb)) = (a.parse::<f64>(), b.parse::<f64>()) {
         // Handle NaN explicitly since partial_cmp returns None for NaN
@@ -1136,5 +1244,47 @@ mod tests {
             aggregate_column_def(&AggFunc::CountStar, &cols),
             ("COUNT(*)".to_string(), ColumnType::Int)
         );
+    }
+
+    #[test]
+    fn test_like_match_basic() {
+        assert!(like_match("hello", "hello"));
+        assert!(like_match("hello", "h_llo"));
+        assert!(like_match("hello", "h%o"));
+        assert!(like_match("hello", "%"));
+        assert!(like_match("hello", "he%"));
+        assert!(like_match("hello", "%lo"));
+        assert!(like_match("", "%"));
+        assert!(like_match("", ""));
+    }
+
+    #[test]
+    fn test_like_match_case_insensitive() {
+        // MySQL default collation: LIKE is case-insensitive.
+        assert!(like_match("Hello", "hello"));
+        assert!(like_match("HELLO", "h_llo"));
+        assert!(like_match("Hello", "H%O"));
+    }
+
+    #[test]
+    fn test_like_match_no_match() {
+        assert!(!like_match("hello", "world"));
+        assert!(!like_match("hello", "h_o")); // h_o needs exactly 1 char between
+        assert!(!like_match("hello", "h%x"));  // must end with x
+        assert!(!like_match("", "h"));
+    }
+
+    #[test]
+    fn test_like_match_underscore() {
+        assert!(like_match("abc", "a_c"));
+        assert!(!like_match("ac", "a_c")); // underscore needs exactly one char
+        assert!(!like_match("abbc", "a_c"));
+    }
+
+    #[test]
+    fn test_like_match_multiple_percent() {
+        // Consecutive % collapse to one.
+        assert!(like_match("hello", "h%%o"));
+        assert!(like_match("hello", "%%%"));
     }
 }
