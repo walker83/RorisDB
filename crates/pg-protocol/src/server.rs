@@ -117,8 +117,24 @@ impl PgServer {
                     info!("PG connection {} accepted from {}", conn_id, peer_addr);
                     tokio::spawn(
                         async move {
-                            handle_pg_connection(stream, conn_id, handler, auth_config, permit)
-                                .await;
+                            // Panic-recovery boundary: a panic during PG
+                            // request handling closes only this connection.
+                            if let Err(payload) =
+                                common::panic_recovery::catch_unwind(handle_pg_connection(
+                                    stream,
+                                    conn_id,
+                                    handler,
+                                    auth_config,
+                                    permit,
+                                ))
+                                .await
+                            {
+                                error!(
+                                    "PG connection {} panicked: {}",
+                                    conn_id,
+                                    common::panic_recovery::payload_to_string(&payload)
+                                );
+                            }
                         }
                         .instrument(info_span!("pg_conn", cid = conn_id)),
                     );

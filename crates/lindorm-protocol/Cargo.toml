@@ -5,6 +5,7 @@ edition = "2024"
 description = "Alibaba Cloud Lindorm (HBase-compatible) protocol implementation"
 
 [dependencies]
+common = { workspace = true }
 tokio.workspace = true
 bytes.workspace = true
 tracing.workspace = true

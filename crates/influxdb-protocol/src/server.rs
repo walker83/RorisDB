@@ -58,20 +58,28 @@ impl InfluxDBServer {
 
                     let handler = handler.clone();
                     tokio::spawn(async move {
-                        let io = TokioIo::new(stream);
+                        // Panic-recovery boundary: a panic in a request handler
+                        // closes only this connection.
+                        let outcome = common::panic_recovery::catch_unwind(async {
+                            let io = TokioIo::new(stream);
 
-                        let service = hyper::service::service_fn(move |req: Request<Incoming>| {
-                            let handler = handler.clone();
-                            async move {
-                                handle_request(req, handler).await
-                            }
-                        });
+                            let service = hyper::service::service_fn(
+                                move |req: Request<Incoming>| {
+                                    let handler = handler.clone();
+                                    async move { handle_request(req, handler).await }
+                                },
+                            );
 
-                        if let Err(err) = hyper::server::conn::http1::Builder::new()
-                            .serve_connection(io, service)
-                            .await
-                        {
-                            error!("Error serving connection: {:?}", err);
+                            hyper::server::conn::http1::Builder::new()
+                                .serve_connection(io, service)
+                                .await
+                        })
+                        .await;
+                        if let Err(payload) = outcome {
+                            error!(
+                                "InfluxDB connection panicked: {}",
+                                common::panic_recovery::payload_to_string(&payload)
+                            );
                         }
                     });
                 }

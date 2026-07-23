@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "InfluxDB line protocol implementation for HarnessDB - TSDB compatible"
 
 [dependencies]
+common = { workspace = true }
 tokio = { workspace = true }
 bytes = "1"
 tracing = { workspace = true }

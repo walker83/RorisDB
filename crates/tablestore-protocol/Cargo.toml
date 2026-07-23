@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "Alibaba Cloud TableStore (OTS) REST API implementation for HarnessDB"
 
 [dependencies]
+common = { workspace = true }
 tokio = { workspace = true }
 bytes = "1"
 tracing = { workspace = true }

@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+common = { workspace = true }
 mysql-protocol = { path = "../mysql-protocol" }
 tokio = { workspace = true }
 bytes = "1"

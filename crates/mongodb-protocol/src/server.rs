@@ -54,9 +54,21 @@ impl MongoDBServer {
 
                     let handler = self.handler.clone();
                     tokio::spawn(async move {
-                        let conn = MongoDBConnection::new(stream, handler, conn_id);
-                        if let Err(e) = conn.run().await {
-                            error!("MongoDB connection error: {}", e);
+                        // Panic-recovery boundary: a panic during MongoDB
+                        // request handling closes only this connection.
+                        let outcome = common::panic_recovery::catch_unwind(async {
+                            let conn = MongoDBConnection::new(stream, handler, conn_id);
+                            conn.run().await
+                        })
+                        .await;
+                        match outcome {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => error!("MongoDB connection error: {}", e),
+                            Err(payload) => error!(
+                                "MongoDB connection {} panicked: {}",
+                                conn_id,
+                                common::panic_recovery::payload_to_string(&payload)
+                            ),
                         }
                     });
                 }

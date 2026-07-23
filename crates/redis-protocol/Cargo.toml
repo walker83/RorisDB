@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "Redis protocol (RESP2/RESP3) implementation for HarnessDB - Tair compatible"
 
 [dependencies]
+common = { workspace = true }
 tokio = { workspace = true }
 bytes = "1"
 tracing = { workspace = true }

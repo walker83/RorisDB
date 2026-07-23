@@ -56,8 +56,19 @@ impl CassandraServer {
 
                     let handler = handler.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = handle_connection(stream, handler).await {
-                            error!("Cassandra connection error: {}", e);
+                        // Panic-recovery boundary: a panic during Cassandra
+                        // request handling closes only this connection.
+                        match common::panic_recovery::catch_unwind(handle_connection(
+                            stream, handler,
+                        ))
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => error!("Cassandra connection error: {}", e),
+                            Err(payload) => error!(
+                                "Cassandra connection panicked: {}",
+                                common::panic_recovery::payload_to_string(&payload)
+                            ),
                         }
                     });
                 }

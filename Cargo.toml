@@ -64,6 +64,8 @@ repository = "https://github.com/walker83/HarnessDB"
 [workspace.dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
+# Async utilities — used for future-level panic recovery (catch_unwind).
+futures-util = "0.3"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

@@ -193,17 +193,29 @@ impl MysqlServer {
 
                     tokio::spawn(
                         async move {
-                            if let Err(e) = handle_connection(
-                                stream,
-                                conn_id,
-                                handler,
-                                auth_timeout_secs,
-                                permit,
-                                creds,
+                            // Wrap the connection in a panic-recovery boundary so a
+                            // panic in request handling (e.g. an unwrap on malformed
+                            // client input, a poisoned lock) closes only this
+                            // connection instead of tearing down the worker thread.
+                            match common::panic_recovery::catch_unwind(
+                                handle_connection(
+                                    stream,
+                                    conn_id,
+                                    handler,
+                                    auth_timeout_secs,
+                                    permit,
+                                    creds,
+                                ),
                             )
                             .await
                             {
-                                error!("Connection {} error: {}", conn_id, e);
+                                Ok(Ok(())) => {}
+                                Ok(Err(e)) => error!("Connection {} error: {}", conn_id, e),
+                                Err(payload) => error!(
+                                    "Connection {} panicked: {}",
+                                    conn_id,
+                                    common::panic_recovery::payload_to_string(&payload)
+                                ),
                             }
                             info!("Connection {} closed", conn_id);
                         }

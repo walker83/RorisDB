@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "ClickHouse HTTP protocol implementation for HarnessDB"
 
 [dependencies]
+common = { workspace = true }
 tokio = { workspace = true }
 bytes = "1"
 tracing = { workspace = true }

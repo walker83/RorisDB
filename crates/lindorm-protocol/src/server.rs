@@ -31,8 +31,19 @@ impl LindormServer {
 
             let storage = self.storage.clone();
             tokio::spawn(async move {
-                if let Err(e) = Self::handle_connection(stream, storage).await {
-                    error!("Connection error: {}", e);
+                // Panic-recovery boundary: a panic during Lindorm request
+                // handling closes only this connection.
+                match common::panic_recovery::catch_unwind(Self::handle_connection(
+                    stream, storage,
+                ))
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => error!("Lindorm connection error: {}", e),
+                    Err(payload) => error!(
+                        "Lindorm connection panicked: {}",
+                        common::panic_recovery::payload_to_string(&payload)
+                    ),
                 }
             });
         }

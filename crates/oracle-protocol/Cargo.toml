@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "Oracle TNS protocol simulation for HarnessDB - PolarDB-O compatible"
 
 [dependencies]
+common = { workspace = true }
 tokio = { workspace = true }
 bytes = "1"
 tracing = { workspace = true }

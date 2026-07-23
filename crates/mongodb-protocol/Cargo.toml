@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "MongoDB wire protocol implementation for HarnessDB - ApsaraDB MongoDB compatible"
 
 [dependencies]
+common = { workspace = true }
 tokio = { workspace = true }
 bytes = "1"
 tracing = { workspace = true }

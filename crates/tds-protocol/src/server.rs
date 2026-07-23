@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use tracing::error;
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 use mysql_protocol::server::QueryHandler;
@@ -58,7 +59,20 @@ impl TdsServer {
             let conn_id = self.conn_counter.fetch_add(1, Ordering::Relaxed);
             let handler = self.handler.clone();
             tokio::spawn(async move {
-                connection::run_connection(stream, handler, conn_id).await;
+                // Panic-recovery boundary: a panic during TDS request handling
+                // closes only this connection. `permit` is dropped after, so
+                // the connection slot is always released.
+                if let Err(payload) = common::panic_recovery::catch_unwind(
+                    connection::run_connection(stream, handler, conn_id),
+                )
+                .await
+                {
+                    error!(
+                        "TDS connection {} panicked: {}",
+                        conn_id,
+                        common::panic_recovery::payload_to_string(&payload)
+                    );
+                }
                 drop(permit);
             });
         }

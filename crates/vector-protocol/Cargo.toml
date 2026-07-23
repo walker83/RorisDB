@@ -5,6 +5,7 @@ edition = "2024"
 description = "Vector database protocol implementation for HarnessDB"
 
 [dependencies]
+common = { workspace = true }
 tokio.workspace = true
 bytes.workspace = true
 tracing.workspace = true

@@ -63,9 +63,21 @@ impl RedisServer {
 
                     let handler = self.handler.clone();
                     tokio::spawn(async move {
-                        let conn = RedisConnection::new(stream, handler, conn_id);
-                        if let Err(e) = conn.run().await {
-                            error!("Redis connection error: {}", e);
+                        // Panic-recovery boundary: a panic during Redis request
+                        // handling closes only this connection.
+                        let outcome = common::panic_recovery::catch_unwind(async {
+                            let conn = RedisConnection::new(stream, handler, conn_id);
+                            conn.run().await
+                        })
+                        .await;
+                        match outcome {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => error!("Redis connection error: {}", e),
+                            Err(payload) => error!(
+                                "Redis connection {} panicked: {}",
+                                conn_id,
+                                common::panic_recovery::payload_to_string(&payload)
+                            ),
                         }
                     });
                 }
