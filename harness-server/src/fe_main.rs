@@ -291,6 +291,7 @@ impl QueryHandler for HarnessQueryHandler {
     }
 
     fn on_disconnect(&self, conn_id: u32) {
+        tracing::info!("on_disconnect called for conn_id={}", conn_id);
         self.connection_tracker.unregister(conn_id);
         self.remove_session(conn_id);
     }

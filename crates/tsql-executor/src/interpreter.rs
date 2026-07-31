@@ -312,32 +312,67 @@ impl TsqlInterpreter {
             TsqlExpr::BinaryOp { left, op: TsqlBinaryOp::Eq, right } => {
                 let l = self.eval_to_literal(ctx, left)?;
                 let r = self.eval_to_literal(ctx, right)?;
-                Ok(literal_to_string(&l) == literal_to_string(&r))
+                // SQL three-valued logic: NULL comparison returns UNKNOWN (false in conditions)
+                if matches!(l, TsqlLiteral::Null) || matches!(r, TsqlLiteral::Null) {
+                    Ok(false)
+                } else {
+                    Ok(literal_to_string(&l) == literal_to_string(&r))
+                }
             }
             TsqlExpr::BinaryOp { left, op: TsqlBinaryOp::NotEq, right } => {
                 let l = self.eval_to_literal(ctx, left)?;
                 let r = self.eval_to_literal(ctx, right)?;
-                Ok(literal_to_string(&l) != literal_to_string(&r))
+                // SQL three-valued logic: NULL comparison returns UNKNOWN (false in conditions)
+                if matches!(l, TsqlLiteral::Null) || matches!(r, TsqlLiteral::Null) {
+                    Ok(false)
+                } else {
+                    Ok(literal_to_string(&l) != literal_to_string(&r))
+                }
             }
             TsqlExpr::BinaryOp { left, op: TsqlBinaryOp::Lt, right } => {
-                let l = self.eval_expr_to_int(ctx, left)?;
-                let r = self.eval_expr_to_int(ctx, right)?;
-                Ok(l < r)
+                let l = self.eval_to_literal(ctx, left)?;
+                let r = self.eval_to_literal(ctx, right)?;
+                // SQL three-valued logic: NULL comparison returns UNKNOWN (false in conditions)
+                if matches!(l, TsqlLiteral::Null) || matches!(r, TsqlLiteral::Null) {
+                    Ok(false)
+                } else {
+                    let l_int = self.eval_expr_to_int(ctx, left)?;
+                    let r_int = self.eval_expr_to_int(ctx, right)?;
+                    Ok(l_int < r_int)
+                }
             }
             TsqlExpr::BinaryOp { left, op: TsqlBinaryOp::Gt, right } => {
-                let l = self.eval_expr_to_int(ctx, left)?;
-                let r = self.eval_expr_to_int(ctx, right)?;
-                Ok(l > r)
+                let l = self.eval_to_literal(ctx, left)?;
+                let r = self.eval_to_literal(ctx, right)?;
+                if matches!(l, TsqlLiteral::Null) || matches!(r, TsqlLiteral::Null) {
+                    Ok(false)
+                } else {
+                    let l_int = self.eval_expr_to_int(ctx, left)?;
+                    let r_int = self.eval_expr_to_int(ctx, right)?;
+                    Ok(l_int > r_int)
+                }
             }
             TsqlExpr::BinaryOp { left, op: TsqlBinaryOp::LtEq, right } => {
-                let l = self.eval_expr_to_int(ctx, left)?;
-                let r = self.eval_expr_to_int(ctx, right)?;
-                Ok(l <= r)
+                let l = self.eval_to_literal(ctx, left)?;
+                let r = self.eval_to_literal(ctx, right)?;
+                if matches!(l, TsqlLiteral::Null) || matches!(r, TsqlLiteral::Null) {
+                    Ok(false)
+                } else {
+                    let l_int = self.eval_expr_to_int(ctx, left)?;
+                    let r_int = self.eval_expr_to_int(ctx, right)?;
+                    Ok(l_int <= r_int)
+                }
             }
             TsqlExpr::BinaryOp { left, op: TsqlBinaryOp::GtEq, right } => {
-                let l = self.eval_expr_to_int(ctx, left)?;
-                let r = self.eval_expr_to_int(ctx, right)?;
-                Ok(l >= r)
+                let l = self.eval_to_literal(ctx, left)?;
+                let r = self.eval_to_literal(ctx, right)?;
+                if matches!(l, TsqlLiteral::Null) || matches!(r, TsqlLiteral::Null) {
+                    Ok(false)
+                } else {
+                    let l_int = self.eval_expr_to_int(ctx, left)?;
+                    let r_int = self.eval_expr_to_int(ctx, right)?;
+                    Ok(l_int >= r_int)
+                }
             }
             TsqlExpr::BinaryOp { left, op: TsqlBinaryOp::And, right } => {
                 Ok(self.eval_condition(ctx, left)? && self.eval_condition(ctx, right)?)
@@ -351,6 +386,70 @@ impl TsqlInterpreter {
             TsqlExpr::Literal(TsqlLiteral::Null) => Ok(false),
             TsqlExpr::Literal(TsqlLiteral::Bit(b)) => Ok(*b),
             TsqlExpr::Literal(TsqlLiteral::Int(n)) => Ok(*n != 0),
+            TsqlExpr::Like { expr, pattern, negated, escape } => {
+                let val_lit = self.eval_to_literal(ctx, expr)?;
+                // T-SQL three-valued logic: any comparison involving NULL is UNKNOWN,
+                // which is falsy in an IF/WHILE condition (NOT UNKNOWN treated as true here).
+                if matches!(val_lit, TsqlLiteral::Null) {
+                    return Ok(*negated);
+                }
+                let val = literal_to_string(&val_lit);
+                let pat = literal_to_string(&self.eval_to_literal(ctx, pattern)?);
+                // T-SQL has no default escape character: backslash is literal unless an
+                // explicit ESCAPE clause is given. So None => no escaping.
+                let esc = match escape {
+                    Some(e) => literal_to_string(&self.eval_to_literal(ctx, e)?).chars().next(),
+                    None => None,
+                };
+                let matched = tsql_like_match(&val, &pat, esc);
+                Ok(if *negated { !matched } else { matched })
+            }
+            TsqlExpr::InList { expr, list, negated } => {
+                let val_lit = self.eval_to_literal(ctx, expr)?;
+                // NULL IN (...) is UNKNOWN => falsy (NOT IN => true).
+                if matches!(val_lit, TsqlLiteral::Null) {
+                    return Ok(*negated);
+                }
+                let val = literal_to_string(&val_lit);
+                let mut found = false;
+                for item in list {
+                    if literal_to_string(&self.eval_to_literal(ctx, item)?) == val {
+                        found = true;
+                        break;
+                    }
+                }
+                Ok(if *negated { !found } else { found })
+            }
+            TsqlExpr::Between { expr, low, high, negated } => {
+                let val_lit = self.eval_to_literal(ctx, expr)?;
+                let low_lit = self.eval_to_literal(ctx, low)?;
+                let high_lit = self.eval_to_literal(ctx, high)?;
+                // NULL on any operand makes the range check UNKNOWN => falsy.
+                if matches!(val_lit, TsqlLiteral::Null)
+                    || matches!(low_lit, TsqlLiteral::Null)
+                    || matches!(high_lit, TsqlLiteral::Null)
+                {
+                    return Ok(*negated);
+                }
+                let val = literal_to_string(&val_lit);
+                let lo = literal_to_string(&low_lit);
+                let hi = literal_to_string(&high_lit);
+                // Numeric range when all three parse as numbers, else case-insensitive
+                // string comparison (consistent with T-SQL's default CI collation and
+                // with the case-insensitive LIKE above). Inclusive on both ends.
+                let in_range = match (val.parse::<f64>(), lo.parse::<f64>(), hi.parse::<f64>()) {
+                    (Ok(v), Ok(l), Ok(h)) => v >= l && v <= h,
+                    _ => {
+                        let (vs, ls, hs) = (
+                            val.to_lowercase(),
+                            lo.to_lowercase(),
+                            hi.to_lowercase(),
+                        );
+                        vs >= ls && vs <= hs
+                    }
+                };
+                Ok(if *negated { !in_range } else { in_range })
+            }
             _ => {
                 // Try to evaluate as integer, non-zero = true
                 let val = self.eval_expr_to_int(ctx, expr).unwrap_or(0);
@@ -542,5 +641,243 @@ pub fn literal_to_string(lit: &TsqlLiteral) -> String {
         TsqlLiteral::Money(s) => s.clone(),
         TsqlLiteral::DateTime(s) => s.clone(),
         TsqlLiteral::Bit(b) => if *b { "1".to_string() } else { "0".to_string() },
+    }
+}
+
+/// Match a value against a SQL LIKE pattern (T-SQL semantics).
+///
+/// `%` matches any sequence of characters (including empty), `_` matches any
+/// single character, and any other character matches itself. When `escape` is
+/// `Some(c)`, an occurrence of `c` in the pattern causes the *next* pattern
+/// character to be matched literally. Matching is case-insensitive (SQL
+/// Server's default collation): both sides are lowercased before comparison.
+///
+/// The matcher is an iterative two-row dynamic program with worst-case time
+/// `O(|value| * |pattern|)` and no recursion, so an adversarial pattern such
+/// as `%a%a%a...` cannot trigger exponential backtracking.
+fn tsql_like_match(value: &str, pattern: &str, escape: Option<char>) -> bool {
+    let v: Vec<char> = value.chars().flat_map(|c| c.to_lowercase()).collect();
+    let p: Vec<char> = pattern.chars().flat_map(|c| c.to_lowercase()).collect();
+    // Lowercase the escape char too, since the pattern has been lowercased.
+    let escape = escape.map(|c| c.to_lowercase().next().unwrap_or(c));
+
+    // Parse the pattern into tokens, resolving escapes up front so an escaped
+    // `%`/`_` becomes a literal and can never act as a wildcard.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Tok {
+        Many,
+        One,
+        Lit(char),
+    }
+    let mut toks: Vec<Tok> = Vec::with_capacity(p.len());
+    let mut i = 0usize;
+    while i < p.len() {
+        let c = p[i];
+        if escape == Some(c) && i + 1 < p.len() {
+            toks.push(Tok::Lit(p[i + 1]));
+            i += 2;
+            continue;
+        }
+        match c {
+            '%' => toks.push(Tok::Many),
+            '_' => toks.push(Tok::One),
+            _ => toks.push(Tok::Lit(c)),
+        }
+        i += 1;
+    }
+
+    let n = v.len();
+    let mut prev = vec![false; n + 1];
+    let mut curr = vec![false; n + 1];
+    prev[0] = true;
+
+    for tok in &toks {
+        curr[0] = prev[0] && *tok == Tok::Many;
+        for j in 1..=n {
+            curr[j] = match tok {
+                Tok::Many => prev[j] || curr[j - 1],
+                Tok::One => prev[j - 1],
+                Tok::Lit(c) => prev[j - 1] && v[j - 1] == *c,
+            };
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+
+    prev[n]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transaction::TsqlTransactionManager;
+    use fe_catalog::catalog::CatalogManager;
+    use fe_storage::ParquetStorage;
+    use std::sync::Arc;
+
+    fn lit_str(s: &str) -> TsqlExpr {
+        TsqlExpr::Literal(TsqlLiteral::String(s.to_string()))
+    }
+    fn lit_int(n: i64) -> TsqlExpr {
+        TsqlExpr::Literal(TsqlLiteral::Int(n))
+    }
+    fn null_expr() -> TsqlExpr {
+        TsqlExpr::Literal(TsqlLiteral::Null)
+    }
+
+    /// Build a throwaway context. The literal-only expressions used in these
+    /// tests never touch the catalog/storage, but valid instances are required.
+    fn test_ctx(name: &str) -> ExecutionContext {
+        let base = std::env::temp_dir().join(format!("tsql_eval_test_{}", name));
+        let _ = std::fs::create_dir_all(&base);
+        let catalog = Arc::new(CatalogManager::with_path(
+            base.join("catalog").to_string_lossy().into_owned(),
+        ));
+        let storage = Arc::new(ParquetStorage::open(base.join("storage")).expect("open storage"));
+        let txn = Arc::new(TsqlTransactionManager::new());
+        ExecutionContext::new(1, "db".to_string(), catalog, storage, txn)
+    }
+
+    // ---- tsql_like_match: case-insensitive iterative matcher ----
+
+    #[test]
+    fn test_like_match_case_insensitive() {
+        assert!(tsql_like_match("Hello", "h%", None));
+        assert!(tsql_like_match("ABC", "abc", None));
+        assert!(tsql_like_match("abc", "A%C", None));
+    }
+
+    #[test]
+    fn test_like_match_underscore() {
+        assert!(tsql_like_match("abc", "a_c", None));
+        assert!(!tsql_like_match("ac", "a_c", None));
+        assert!(!tsql_like_match("abbc", "a_c", None));
+    }
+
+    #[test]
+    fn test_like_match_explicit_escape() {
+        assert!(tsql_like_match("a%b", "a!%b", Some('!')));
+        assert!(!tsql_like_match("aXb", "a!%b", Some('!')));
+        assert!(tsql_like_match("a_b", "a!_b", Some('!')));
+    }
+
+    #[test]
+    fn test_like_match_backslash_literal_when_no_escape() {
+        // T-SQL: with no ESCAPE clause, backslash is an ordinary literal char.
+        assert!(tsql_like_match("a\\b", "a\\b", None));
+        // 'a\' followed by a wildcard '%': matches values starting with 'a\'.
+        assert!(tsql_like_match("a\\XYZ", "a\\%", None));
+        assert!(!tsql_like_match("aXYZ", "a\\%", None));
+    }
+
+    #[test]
+    fn test_like_match_dos_regression() {
+        let long = "a".repeat(200);
+        assert!(!tsql_like_match(&long, "%a%a%a%a%a%a%a%a%a%a%b", None));
+    }
+
+    // ---- eval_condition arms ----
+
+    #[test]
+    fn test_eval_condition_inlist() {
+        let interp = TsqlInterpreter::new();
+        let mut ctx = test_ctx("inlist");
+        let found = TsqlExpr::InList {
+            expr: Box::new(lit_str("active")),
+            list: vec![lit_str("active"), lit_str("pending")],
+            negated: false,
+        };
+        assert!(interp.eval_condition(&mut ctx, &found).unwrap());
+        let neg = TsqlExpr::InList {
+            expr: Box::new(lit_str("active")),
+            list: vec![lit_str("active"), lit_str("pending")],
+            negated: true,
+        };
+        assert!(!interp.eval_condition(&mut ctx, &neg).unwrap());
+        let no_match = TsqlExpr::InList {
+            expr: Box::new(lit_str("closed")),
+            list: vec![lit_str("active"), lit_str("pending")],
+            negated: false,
+        };
+        assert!(!interp.eval_condition(&mut ctx, &no_match).unwrap());
+    }
+
+    #[test]
+    fn test_eval_condition_between_numeric() {
+        let interp = TsqlInterpreter::new();
+        let mut ctx = test_ctx("between_num");
+        let mk = |v: i64, lo: i64, hi: i64, neg: bool| TsqlExpr::Between {
+            expr: Box::new(lit_int(v)),
+            low: Box::new(lit_int(lo)),
+            high: Box::new(lit_int(hi)),
+            negated: neg,
+        };
+        assert!(interp.eval_condition(&mut ctx, &mk(25, 20, 30, false)).unwrap());
+        assert!(interp.eval_condition(&mut ctx, &mk(20, 20, 30, false)).unwrap()); // inclusive low
+        assert!(interp.eval_condition(&mut ctx, &mk(30, 20, 30, false)).unwrap()); // inclusive high
+        assert!(!interp.eval_condition(&mut ctx, &mk(31, 20, 30, false)).unwrap());
+        assert!(!interp.eval_condition(&mut ctx, &mk(25, 20, 30, true)).unwrap()); // negated
+    }
+
+    #[test]
+    fn test_eval_condition_between_case_insensitive() {
+        let interp = TsqlInterpreter::new();
+        let mut ctx = test_ctx("between_ci");
+        // 'B' lies between 'a' and 'z' under case-insensitive comparison.
+        let expr = TsqlExpr::Between {
+            expr: Box::new(lit_str("B")),
+            low: Box::new(lit_str("a")),
+            high: Box::new(lit_str("z")),
+            negated: false,
+        };
+        assert!(interp.eval_condition(&mut ctx, &expr).unwrap());
+    }
+
+    #[test]
+    fn test_eval_condition_like() {
+        let interp = TsqlInterpreter::new();
+        let mut ctx = test_ctx("like");
+        let matched = TsqlExpr::Like {
+            expr: Box::new(lit_str("hello")),
+            pattern: Box::new(lit_str("h%")),
+            negated: false,
+            escape: None,
+        };
+        assert!(interp.eval_condition(&mut ctx, &matched).unwrap());
+        let neg = TsqlExpr::Like {
+            expr: Box::new(lit_str("hello")),
+            pattern: Box::new(lit_str("h%")),
+            negated: true,
+            escape: None,
+        };
+        assert!(!interp.eval_condition(&mut ctx, &neg).unwrap());
+    }
+
+    #[test]
+    fn test_eval_condition_null_is_falsy() {
+        let interp = TsqlInterpreter::new();
+        let mut ctx = test_ctx("null");
+        // NULL LIKE '%' -> UNKNOWN -> falsy (non-negated).
+        let like = TsqlExpr::Like {
+            expr: Box::new(null_expr()),
+            pattern: Box::new(lit_str("%")),
+            negated: false,
+            escape: None,
+        };
+        assert!(!interp.eval_condition(&mut ctx, &like).unwrap());
+        // NULL IN (...) -> UNKNOWN -> falsy.
+        let inlist = TsqlExpr::InList {
+            expr: Box::new(null_expr()),
+            list: vec![lit_str("a")],
+            negated: false,
+        };
+        assert!(!interp.eval_condition(&mut ctx, &inlist).unwrap());
+        // NULL BETWEEN -> UNKNOWN -> falsy.
+        let between = TsqlExpr::Between {
+            expr: Box::new(null_expr()),
+            low: Box::new(lit_str("a")),
+            high: Box::new(lit_str("z")),
+            negated: false,
+        };
+        assert!(!interp.eval_condition(&mut ctx, &between).unwrap());
     }
 }

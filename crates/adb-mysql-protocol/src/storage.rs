@@ -2,6 +2,7 @@
 
 use dashmap::DashMap;
 use std::sync::Arc;
+use tracing::debug;
 
 /// Column type enum matching common SQL types
 #[derive(Debug, Clone, PartialEq)]
@@ -58,12 +59,14 @@ impl AdbMysqlStorage {
     }
 
     pub fn create_database(&self, name: &str) {
+        debug!("ADB storage: creating database '{}'", name);
         self.databases
             .entry(name.to_string())
             .or_insert_with(|| Arc::new(AdbMysqlDatabase::new()));
     }
 
     pub fn drop_database(&self, name: &str) -> bool {
+        debug!("ADB storage: dropping database '{}'", name);
         self.databases.remove(name).is_some()
     }
 

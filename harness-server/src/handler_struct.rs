@@ -201,7 +201,12 @@ impl HarnessQueryHandler {
     /// Remove session state for a connection
     pub(crate) fn remove_session(&self, conn_id: u32) {
         let mut sessions = self.sessions.write();
-        sessions.remove(&conn_id);
+        let removed = sessions.remove(&conn_id);
+        if let Some(session) = removed {
+            tracing::info!("Removed session for conn_id={}, database was '{}'", conn_id, session.current_database);
+        } else {
+            tracing::warn!("No session found for conn_id={} during removal", conn_id);
+        }
     }
 
     /// Execute a DataFusion async operation in a spawned thread with concurrency limit.

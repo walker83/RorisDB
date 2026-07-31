@@ -67,11 +67,11 @@ pub enum PgProtocolError {
 /// PostgreSQL protocol version 3.0 (encoded as 196608 = 3 << 16 | 0).
 pub const PG_PROTOCOL_VERSION_3: i32 = 196608;
 
-/// Special version number for SSL request.
-pub const SSL_REQUEST_CODE: i32 = 80877102;
+/// Special version number for SSL request (1234 << 16 | 5679).
+pub const SSL_REQUEST_CODE: i32 = 80877103;
 
-/// Special version number for cancel request.
-pub const CANCEL_REQUEST_CODE: i32 = 80877103;
+/// Special version number for cancel request (1234 << 16 | 5678).
+pub const CANCEL_REQUEST_CODE: i32 = 80877102;
 
 // Type OIDs commonly used in PostgreSQL wire protocol
 pub const OID_INT2: i32 = 21;
@@ -755,6 +755,19 @@ fn put_cstring(buf: &mut BytesMut, s: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_special_request_codes_match_protocol() {
+        // Regression guard: these two codes were once swapped, which made the
+        // server treat every client's SSLRequest as a CancelRequest and drop
+        // the connection (all standard PG clients send SSLRequest first).
+        // SSLRequest = 1234 << 16 | 5679, CancelRequest = 1234 << 16 | 5678.
+        assert_eq!(SSL_REQUEST_CODE, (1234 << 16) | 5679);
+        assert_eq!(CANCEL_REQUEST_CODE, (1234 << 16) | 5678);
+        assert_eq!(SSL_REQUEST_CODE, 80877103);
+        assert_eq!(CANCEL_REQUEST_CODE, 80877102);
+        assert_ne!(SSL_REQUEST_CODE, CANCEL_REQUEST_CODE);
+    }
 
     #[test]
     fn test_encode_authentication_ok() {

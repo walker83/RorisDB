@@ -70,7 +70,7 @@ pub async fn catch_unwind<F>(future: F) -> Result<F::Output, PanicPayload>
 where
     F: futures_util::Future,
 {
-    AssertUnwindSafe(future).catch_unwind().await.map_err(|payload| payload)
+    AssertUnwindSafe(future).catch_unwind().await
 }
 
 #[cfg(test)]

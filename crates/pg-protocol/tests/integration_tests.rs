@@ -159,7 +159,7 @@ fn encode_terminate() -> Vec<u8> {
 /// Encode an SSLRequest (no type byte, like startup).
 /// Format: Length(4) + SSLRequestCode(4)  [SSL request code = 80877102]
 fn encode_ssl_request() -> Vec<u8> {
-    let ssl_code = 80877102i32;
+    let ssl_code = 80877103i32; // SSL_REQUEST_CODE = 1234 << 16 | 5679
     let mut msg = Vec::new();
     msg.extend_from_slice(&8i32.to_be_bytes()); // length = 8
     msg.extend_from_slice(&ssl_code.to_be_bytes());

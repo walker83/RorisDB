@@ -34,6 +34,14 @@ struct TestContext {
     conn: RefCell<mysql::Conn>,
 }
 
+impl Drop for TestContext {
+    fn drop(&mut self) {
+        // Give server time to clean up connection state before next test
+        // This prevents race conditions where on_disconnect hasn't completed yet
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 lazy_static! {
     static ref SERVER: Arc<harness::E2eServer> = {
         harness::shared_server(MYSQL_PORT)

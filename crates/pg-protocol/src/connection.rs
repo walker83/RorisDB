@@ -150,6 +150,8 @@ impl PgConnection {
                                 .unwrap_or_else(|| "root".to_string());
                             self.session.database =
                                 params.get("database").cloned().unwrap_or_default();
+                            // Set the database in the query handler so unqualified table names resolve correctly
+                            self.handler.set_database(self.conn_id, &self.session.database);
                             info!(
                                 "PG conn {}: startup user='{}' database='{}'",
                                 self.conn_id, self.session.username, self.session.database

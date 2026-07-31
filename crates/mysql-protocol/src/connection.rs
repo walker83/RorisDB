@@ -49,6 +49,16 @@ pub struct Connection {
     credentials: Credentials,
 }
 
+impl Drop for Connection {
+    fn drop(&mut self) {
+        // Ensure on_disconnect is called immediately when connection is dropped
+        // This prevents stale database context from persisting in the handler
+        info!("Connection {} Drop: calling on_disconnect", self.conn_id);
+        self.handler.on_disconnect(self.conn_id);
+        info!("Connection {} Drop: on_disconnect completed", self.conn_id);
+    }
+}
+
 impl Connection {
     pub fn new(
         stream: TcpStream,

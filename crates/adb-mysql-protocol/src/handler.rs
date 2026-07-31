@@ -12,7 +12,7 @@ use sqlparser::ast::{
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser;
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Which aggregation function to apply.
 ///
@@ -617,28 +617,40 @@ impl AdbMysqlHandler {
                 let in_range = ge_lo && le_hi;
                 in_range != *negated
             }
-            // [NOT] LIKE <pattern> — MySQL default is case-insensitive.
+            // [NOT] LIKE <pattern> — MySQL default is case-insensitive; the
+            // default escape char is backslash unless an ESCAPE clause overrides it.
             Expr::Like {
                 negated,
                 expr,
                 pattern,
+                escape_char,
                 ..
             } => {
                 let v = self.eval_expr_value(expr, row, columns);
                 let p = self.eval_expr_value(pattern, row, columns);
-                let matched = like_match(&v, &p);
+                let matched = match_like(&v, &p, escape_char);
                 matched != *negated
             }
             Expr::ILike {
                 negated,
                 expr,
                 pattern,
+                escape_char,
                 ..
             } => {
                 let v = self.eval_expr_value(expr, row, columns);
                 let p = self.eval_expr_value(pattern, row, columns);
-                let matched = like_match(&v, &p);
+                let matched = match_like(&v, &p, escape_char);
                 matched != *negated
+            }
+            // IS NULL / IS NOT NULL
+            Expr::IsNull(expr) => {
+                let v = self.eval_expr_value(expr, row, columns);
+                v.is_empty() // Empty string represents NULL
+            }
+            Expr::IsNotNull(expr) => {
+                let v = self.eval_expr_value(expr, row, columns);
+                !v.is_empty() // Non-empty means NOT NULL
             }
             _ => false,
         }
@@ -827,13 +839,29 @@ impl AdbMysqlHandler {
 
     fn execute_delete(&self, database: &str, delete: &Delete) -> QueryResult {
         let table_name = match &delete.from {
-            FromTable::WithFromKeyword(from) => match &from[0].relation {
-                TableFactor::Table { name, .. } => name.to_string(),
-                _ => return QueryResult::ok(),
+            FromTable::WithFromKeyword(from) => match from.first() {
+                Some(t) => match &t.relation {
+                    TableFactor::Table { name, .. } => name.to_string(),
+                    _ => return QueryResult::ok(),
+                },
+                None => {
+                    return QueryResult::with_rows(
+                        vec![ColumnDef { name: "error".to_string(), col_type: ColumnType::String }],
+                        vec![vec![Some("ERROR: DELETE statement has no target table".to_string())]],
+                    );
+                }
             },
-            FromTable::WithoutKeyword(from) => match &from[0].relation {
-                TableFactor::Table { name, .. } => name.to_string(),
-                _ => return QueryResult::ok(),
+            FromTable::WithoutKeyword(from) => match from.first() {
+                Some(t) => match &t.relation {
+                    TableFactor::Table { name, .. } => name.to_string(),
+                    _ => return QueryResult::ok(),
+                },
+                None => {
+                    return QueryResult::with_rows(
+                        vec![ColumnDef { name: "error".to_string(), col_type: ColumnType::String }],
+                        vec![vec![Some("ERROR: DELETE statement has no target table".to_string())]],
+                    );
+                }
             },
         };
 
@@ -889,6 +917,7 @@ impl QueryHandler for AdbMysqlHandler {
                     Use::Object(name) => name.to_string(),
                     _ => "default".to_string(),
                 };
+                debug!("ADB USE [conn={}]: setting database to '{}'", conn_id, db_name);
                 self.current_databases.insert(conn_id, db_name.clone());
                 if self.storage.get_database(&db_name).is_none() {
                     self.storage.create_database(&db_name);
@@ -898,6 +927,7 @@ impl QueryHandler for AdbMysqlHandler {
 
         // Re-read database after USE pre-scan
         let database = self.get_database(conn_id);
+        debug!("ADB execute [conn={}]: using database '{}'", conn_id, database);
 
         let mut result = QueryResult::ok();
         for stmt in stmts {
@@ -914,10 +944,14 @@ impl QueryHandler for AdbMysqlHandler {
     }
 
     fn on_connect(&self, conn_id: u32, _user: &str, _host: &str) {
+        info!("ADB connect [conn={}]: setting database to 'default'", conn_id);
         self.current_databases.insert(conn_id, "default".to_string());
     }
 
     fn on_disconnect(&self, conn_id: u32) {
+        let db = self.current_databases.get(&conn_id);
+        let db_name = db.map(|d| d.value().clone()).unwrap_or_else(|| "none".to_string());
+        info!("ADB disconnect [conn={}]: removing database context (was '{}')", conn_id, db_name);
         self.current_databases.remove(&conn_id);
     }
 }
@@ -1064,59 +1098,93 @@ where
     }
 }
 
+/// Resolve the effective LIKE escape character from the parser-provided
+/// `ESCAPE` clause.
+///
+/// MySQL's default escape character is a backslash (`\`) when no `ESCAPE`
+/// clause is present (`None`). An explicit `ESCAPE 'x'` uses the first
+/// character of the string. An explicit empty `ESCAPE ''` disables escaping
+/// (returns `None`).
+fn resolve_escape_char(escape_char: &Option<String>) -> Option<char> {
+    match escape_char {
+        None => Some('\\'),
+        Some(s) => s.chars().next(),
+    }
+}
+
+/// Evaluate a LIKE match for `value` against `pattern`, honoring the
+/// parser-provided `ESCAPE` clause. The escape character is resolved via
+/// [`resolve_escape_char`] (defaulting to backslash when no `ESCAPE` clause is
+/// given) and the match itself is performed by [`like_match_esc`].
+fn match_like(value: &str, pattern: &str, escape_char: &Option<String>) -> bool {
+    like_match_esc(value, pattern, resolve_escape_char(escape_char))
+}
+
 /// Match a value against an SQL LIKE pattern (MySQL semantics).
 ///
 /// `%` matches any sequence of characters (including empty), `_` matches any
-/// single character, and any other character matches itself. Matching is
-/// case-insensitive (MySQL's default collation). There is no escape handling
-/// for backslashes here because the parser already resolved literal pattern
-/// strings; a literal `%`/`_` in the pattern is always a wildcard.
-fn like_match(value: &str, pattern: &str) -> bool {
+/// single character, and any other character matches itself. When `escape` is
+/// `Some(c)`, an occurrence of `c` in the pattern causes the *next* pattern
+/// character to be matched literally — so with the default backslash escape,
+/// `LIKE 'a\%b'` matches the literal string `a%b` (and not `aXb`). Matching is
+/// case-insensitive (MySQL's default collation): both sides are lowercased
+/// before comparison.
+///
+/// The matcher is an iterative two-row dynamic program over the value and the
+/// parsed pattern tokens. Its worst-case time is `O(|value| * |pattern|)` and
+/// it uses no recursion, so an adversarial pattern such as `%a%a%a...` cannot
+/// trigger exponential backtracking.
+fn like_match_esc(value: &str, pattern: &str, escape: Option<char>) -> bool {
     let v: Vec<char> = value.chars().flat_map(|c| c.to_lowercase()).collect();
     let p: Vec<char> = pattern.chars().flat_map(|c| c.to_lowercase()).collect();
-    like_match_inner(&v, 0, &p, 0)
-}
+    // Lowercase the escape char too, since the pattern has been lowercased.
+    let escape = escape.map(|c| c.to_lowercase().next().unwrap_or(c));
 
-/// Recursive LIKE matcher. Tries to consume the value against the pattern;
-/// `%` greedily tries every split point so it matches the longest prefix that
-/// lets the rest succeed. Complexity is O(|v|*|p|) worst case, acceptable for
-/// typical WHERE clauses.
-fn like_match_inner(v: &[char], vi: usize, p: &[char], pi: usize) -> bool {
-    if pi == p.len() {
-        return vi == v.len();
+    // Parse the pattern into tokens, resolving escapes up front so an escaped
+    // `%`/`_` becomes a literal and can never act as a wildcard.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Tok {
+        Many,
+        One,
+        Lit(char),
     }
-    match p[pi] {
-        // '%' matches zero or more characters.
-        '%' => {
-            // Skip consecutive % (they are equivalent to a single %).
-            let mut next_pi = pi;
-            while next_pi < p.len() && p[next_pi] == '%' {
-                next_pi += 1;
-            }
-            // Try every possible consumption length for the run of '%'.
-            for skip in vi..=v.len() {
-                if like_match_inner(v, skip, p, next_pi) {
-                    return true;
-                }
-            }
-            false
+    let mut toks: Vec<Tok> = Vec::with_capacity(p.len());
+    let mut i = 0usize;
+    while i < p.len() {
+        let c = p[i];
+        if escape == Some(c) && i + 1 < p.len() {
+            toks.push(Tok::Lit(p[i + 1]));
+            i += 2;
+            continue;
         }
-        // '_' matches exactly one character.
-        '_' => {
-            if vi < v.len() {
-                like_match_inner(v, vi + 1, p, pi + 1)
-            } else {
-                false
-            }
+        match c {
+            '%' => toks.push(Tok::Many),
+            '_' => toks.push(Tok::One),
+            _ => toks.push(Tok::Lit(c)),
         }
-        c => {
-            if vi < v.len() && v[vi] == c {
-                like_match_inner(v, vi + 1, p, pi + 1)
-            } else {
-                false
-            }
-        }
+        i += 1;
     }
+
+    let n = v.len();
+    // Two-row DP. `prev[j]` = does `v[..j]` match the token prefix processed so
+    // far? `curr` is the row computed for the next token.
+    let mut prev = vec![false; n + 1];
+    let mut curr = vec![false; n + 1];
+    prev[0] = true; // empty value matches the empty token prefix
+
+    for tok in &toks {
+        curr[0] = prev[0] && *tok == Tok::Many; // only '%' matches empty
+        for j in 1..=n {
+            curr[j] = match tok {
+                Tok::Many => prev[j] || curr[j - 1],
+                Tok::One => prev[j - 1],
+                Tok::Lit(c) => prev[j - 1] && v[j - 1] == *c,
+            };
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+
+    prev[n]
 }
 
 fn compare_string_values(a: &str, b: &str) -> Option<std::cmp::Ordering> {
@@ -1208,7 +1276,6 @@ mod tests {
 
     #[test]
     fn test_aggregate_count_star_empty_is_zero() {
-        let r: Vec<Vec<String>> = vec![];
         assert_eq!(
             compute_aggregate(&AggFunc::CountStar, std::iter::empty(), 0),
             Some("0".to_string())
@@ -1248,43 +1315,363 @@ mod tests {
 
     #[test]
     fn test_like_match_basic() {
-        assert!(like_match("hello", "hello"));
-        assert!(like_match("hello", "h_llo"));
-        assert!(like_match("hello", "h%o"));
-        assert!(like_match("hello", "%"));
-        assert!(like_match("hello", "he%"));
-        assert!(like_match("hello", "%lo"));
-        assert!(like_match("", "%"));
-        assert!(like_match("", ""));
+        let lm = |v: &str, p: &str| like_match_esc(v, p, Some('\\'));
+        assert!(lm("hello", "hello"));
+        assert!(lm("hello", "h_llo"));
+        assert!(lm("hello", "h%o"));
+        assert!(lm("hello", "%"));
+        assert!(lm("hello", "he%"));
+        assert!(lm("hello", "%lo"));
+        assert!(lm("", "%"));
+        assert!(lm("", ""));
     }
 
     #[test]
     fn test_like_match_case_insensitive() {
         // MySQL default collation: LIKE is case-insensitive.
-        assert!(like_match("Hello", "hello"));
-        assert!(like_match("HELLO", "h_llo"));
-        assert!(like_match("Hello", "H%O"));
+        let lm = |v: &str, p: &str| like_match_esc(v, p, Some('\\'));
+        assert!(lm("Hello", "hello"));
+        assert!(lm("HELLO", "h_llo"));
+        assert!(lm("Hello", "H%O"));
     }
 
     #[test]
     fn test_like_match_no_match() {
-        assert!(!like_match("hello", "world"));
-        assert!(!like_match("hello", "h_o")); // h_o needs exactly 1 char between
-        assert!(!like_match("hello", "h%x"));  // must end with x
-        assert!(!like_match("", "h"));
+        let lm = |v: &str, p: &str| like_match_esc(v, p, Some('\\'));
+        assert!(!lm("hello", "world"));
+        assert!(!lm("hello", "h_o")); // h_o needs exactly 1 char between
+        assert!(!lm("hello", "h%x"));  // must end with x
+        assert!(!lm("", "h"));
     }
 
     #[test]
     fn test_like_match_underscore() {
-        assert!(like_match("abc", "a_c"));
-        assert!(!like_match("ac", "a_c")); // underscore needs exactly one char
-        assert!(!like_match("abbc", "a_c"));
+        let lm = |v: &str, p: &str| like_match_esc(v, p, Some('\\'));
+        assert!(lm("abc", "a_c"));
+        assert!(!lm("ac", "a_c")); // underscore needs exactly one char
+        assert!(!lm("abbc", "a_c"));
     }
 
     #[test]
     fn test_like_match_multiple_percent() {
         // Consecutive % collapse to one.
-        assert!(like_match("hello", "h%%o"));
-        assert!(like_match("hello", "%%%"));
+        let lm = |v: &str, p: &str| like_match_esc(v, p, Some('\\'));
+        assert!(lm("hello", "h%%o"));
+        assert!(lm("hello", "%%%"));
+    }
+
+    // ---- eval_where tests: IN / BETWEEN / LIKE (+ edge cases) ----
+
+    /// Build a handler for eval_where tests. eval_where/eval_expr_value only
+    /// read their `columns`/`row` arguments, so an empty in-memory storage is
+    /// sufficient.
+    fn where_handler() -> AdbMysqlHandler {
+        AdbMysqlHandler::new(Arc::new(AdbMysqlStorage::new()))
+    }
+
+    fn city_columns() -> Vec<StorageColumnDef> {
+        vec![
+            StorageColumnDef { name: "name".to_string(), col_type: StorageColumnType::VarChar },
+            StorageColumnDef { name: "pop".to_string(), col_type: StorageColumnType::Int },
+        ]
+    }
+
+    fn col(name: &str) -> Expr {
+        Expr::Identifier(sqlparser::ast::Ident::new(name))
+    }
+
+    fn sval(s: &str) -> Expr {
+        Expr::Value(Value::SingleQuotedString(s.to_string()))
+    }
+
+    fn num(n: &str) -> Expr {
+        Expr::Value(Value::Number(n.to_string(), false))
+    }
+
+    #[test]
+    fn test_eval_where_in_list() {
+        let h = where_handler();
+        let cols = city_columns();
+        let nyc = vec!["NYC".to_string(), "100".to_string()];
+        let sfo = vec!["SFO".to_string(), "50".to_string()];
+
+        let expr = Expr::InList {
+            expr: Box::new(col("name")),
+            list: vec![sval("NYC"), sval("LA")],
+            negated: false,
+        };
+        assert!(h.eval_where(&expr, &nyc, &cols));
+        assert!(!h.eval_where(&expr, &sfo, &cols));
+
+        // NOT IN inverts membership.
+        let not_expr = Expr::InList {
+            expr: Box::new(col("name")),
+            list: vec![sval("NYC"), sval("LA")],
+            negated: true,
+        };
+        assert!(!h.eval_where(&not_expr, &nyc, &cols));
+        assert!(h.eval_where(&not_expr, &sfo, &cols));
+    }
+
+    #[test]
+    fn test_eval_where_in_list_empty() {
+        let h = where_handler();
+        let cols = city_columns();
+        let nyc = vec!["NYC".to_string(), "100".to_string()];
+
+        // Empty IN list matches nothing; NOT IN (empty) matches everything.
+        let in_empty = Expr::InList { expr: Box::new(col("name")), list: vec![], negated: false };
+        assert!(!h.eval_where(&in_empty, &nyc, &cols));
+
+        let not_in_empty = Expr::InList { expr: Box::new(col("name")), list: vec![], negated: true };
+        assert!(h.eval_where(&not_in_empty, &nyc, &cols));
+    }
+
+    #[test]
+    fn test_eval_where_between_inclusive() {
+        let h = where_handler();
+        let cols = city_columns();
+        let row = |p: &str| vec!["x".to_string(), p.to_string()];
+
+        let expr = Expr::Between {
+            expr: Box::new(col("pop")),
+            negated: false,
+            low: Box::new(num("25")),
+            high: Box::new(num("35")),
+        };
+        assert!(h.eval_where(&expr, &row("30"), &cols));
+        // Both bounds are inclusive.
+        assert!(h.eval_where(&expr, &row("25"), &cols));
+        assert!(h.eval_where(&expr, &row("35"), &cols));
+        assert!(!h.eval_where(&expr, &row("24"), &cols));
+        assert!(!h.eval_where(&expr, &row("36"), &cols));
+
+        // NOT BETWEEN inverts the range test.
+        let not_expr = Expr::Between {
+            expr: Box::new(col("pop")),
+            negated: true,
+            low: Box::new(num("25")),
+            high: Box::new(num("35")),
+        };
+        assert!(!h.eval_where(&not_expr, &row("30"), &cols));
+        assert!(h.eval_where(&not_expr, &row("10"), &cols));
+    }
+
+    #[test]
+    fn test_eval_where_between_low_greater_than_high() {
+        let h = where_handler();
+        let cols = city_columns();
+        let row = vec!["x".to_string(), "30".to_string()];
+
+        // low > high defines an empty range: nothing is in range.
+        let expr = Expr::Between {
+            expr: Box::new(col("pop")),
+            negated: false,
+            low: Box::new(num("35")),
+            high: Box::new(num("25")),
+        };
+        assert!(!h.eval_where(&expr, &row, &cols));
+
+        // NOT BETWEEN over an empty range matches everything.
+        let not_expr = Expr::Between {
+            expr: Box::new(col("pop")),
+            negated: true,
+            low: Box::new(num("35")),
+            high: Box::new(num("25")),
+        };
+        assert!(h.eval_where(&not_expr, &row, &cols));
+    }
+
+    #[test]
+    fn test_eval_where_like() {
+        let h = where_handler();
+        let cols = city_columns();
+        let row = |n: &str| vec![n.to_string(), "1".to_string()];
+
+        let like = |pat: &str| Expr::Like {
+            negated: false,
+            any: false,
+            expr: Box::new(col("name")),
+            pattern: Box::new(sval(pat)),
+            escape_char: None,
+        };
+
+        assert!(h.eval_where(&like("a%"), &row("apple"), &cols));
+        assert!(!h.eval_where(&like("a%"), &row("banana"), &cols));
+        assert!(h.eval_where(&like("%z"), &row("quiz"), &cols));
+        assert!(!h.eval_where(&like("%z"), &row("zebra"), &cols));
+        assert!(h.eval_where(&like("_bc"), &row("abc"), &cols));
+        assert!(!h.eval_where(&like("_bc"), &row("abbc"), &cols));
+
+        // NOT LIKE inverts.
+        let not_like = Expr::Like {
+            negated: true,
+            any: false,
+            expr: Box::new(col("name")),
+            pattern: Box::new(sval("a%")),
+            escape_char: None,
+        };
+        assert!(!h.eval_where(&not_like, &row("apple"), &cols));
+        assert!(h.eval_where(&not_like, &row("banana"), &cols));
+    }
+
+    #[test]
+    fn test_eval_where_like_empty_pattern() {
+        let h = where_handler();
+        let cols = city_columns();
+
+        // LIKE '' matches only the empty string.
+        let expr = Expr::Like {
+            negated: false,
+            any: false,
+            expr: Box::new(col("name")),
+            pattern: Box::new(sval("")),
+            escape_char: None,
+        };
+        assert!(h.eval_where(&expr, &vec!["".to_string(), "1".to_string()], &cols));
+        assert!(!h.eval_where(&expr, &vec!["a".to_string(), "1".to_string()], &cols));
+    }
+
+    #[test]
+    fn test_eval_where_like_escape() {
+        let h = where_handler();
+        let cols = city_columns();
+        let row = |n: &str| vec![n.to_string(), "1".to_string()];
+
+        // Default escape (None => backslash): `a\%b` matches the literal
+        // string `a%b`, and `%` is NOT a wildcard there.
+        let expr = Expr::Like {
+            negated: false,
+            any: false,
+            expr: Box::new(col("name")),
+            pattern: Box::new(sval("a\\%b")),
+            escape_char: None,
+        };
+        assert!(h.eval_where(&expr, &row("a%b"), &cols));
+        assert!(!h.eval_where(&expr, &row("aXb"), &cols));
+
+        // A normal (unescaped) wildcard still works in the same matcher.
+        let wildcard = Expr::Like {
+            negated: false,
+            any: false,
+            expr: Box::new(col("name")),
+            pattern: Box::new(sval("a%b")),
+            escape_char: None,
+        };
+        assert!(h.eval_where(&wildcard, &row("aXb"), &cols));
+        assert!(h.eval_where(&wildcard, &row("ab"), &cols));
+    }
+
+    #[test]
+    fn test_eval_where_like_custom_escape() {
+        let h = where_handler();
+        let cols = city_columns();
+        let row = |n: &str| vec![n.to_string(), "1".to_string()];
+
+        // Explicit ESCAPE '!': `a!%b` treats `%` as a literal, matching `a%b`.
+        let expr = Expr::Like {
+            negated: false,
+            any: false,
+            expr: Box::new(col("name")),
+            pattern: Box::new(sval("a!%b")),
+            escape_char: Some("!".to_string()),
+        };
+        assert!(h.eval_where(&expr, &row("a%b"), &cols));
+        assert!(!h.eval_where(&expr, &row("aXb"), &cols));
+
+        // An unescaped wildcard still works under the same custom escape char.
+        let wildcard = Expr::Like {
+            negated: false,
+            any: false,
+            expr: Box::new(col("name")),
+            pattern: Box::new(sval("a%")),
+            escape_char: Some("!".to_string()),
+        };
+        assert!(h.eval_where(&wildcard, &row("aXYZ"), &cols));
+    }
+
+    #[test]
+    fn test_eval_where_like_empty_escape_disables_escaping() {
+        let h = where_handler();
+        let cols = city_columns();
+        let row = |n: &str| vec![n.to_string(), "1".to_string()];
+
+        // Empty ESCAPE '' disables escaping: backslash becomes a literal and
+        // `%` remains a wildcard. Pattern `a\%b` = a, literal '\', wildcard, b.
+        let expr = Expr::Like {
+            negated: false,
+            any: false,
+            expr: Box::new(col("name")),
+            pattern: Box::new(sval("a\\%b")),
+            escape_char: Some("".to_string()),
+        };
+        assert!(h.eval_where(&expr, &row("a\\Xb"), &cols));
+        assert!(!h.eval_where(&expr, &row("a%b"), &cols));
+    }
+
+    #[test]
+    fn test_eval_where_ilike() {
+        let h = where_handler();
+        let cols = city_columns();
+        let row = |n: &str| vec![n.to_string(), "1".to_string()];
+
+        // ILike routes through the same matcher as LIKE (case-insensitive).
+        let expr = Expr::ILike {
+            negated: false,
+            any: false,
+            expr: Box::new(col("name")),
+            pattern: Box::new(sval("H_LLO")),
+            escape_char: None,
+        };
+        assert!(h.eval_where(&expr, &row("hello"), &cols));
+        assert!(h.eval_where(&expr, &row("HELLO"), &cols));
+        assert!(!h.eval_where(&expr, &row("world"), &cols));
+    }
+
+    #[test]
+    fn test_eval_where_not_like_with_escape() {
+        let h = where_handler();
+        let cols = city_columns();
+        let row = |n: &str| vec![n.to_string(), "1".to_string()];
+
+        // negated:true inverts the escaped match.
+        let expr = Expr::Like {
+            negated: true,
+            any: false,
+            expr: Box::new(col("name")),
+            pattern: Box::new(sval("a!%b")),
+            escape_char: Some("!".to_string()),
+        };
+        // `a%b` matches the escaped pattern, so NOT LIKE is false.
+        assert!(!h.eval_where(&expr, &row("a%b"), &cols));
+        // `aXb` does not match, so NOT LIKE is true.
+        assert!(h.eval_where(&expr, &row("aXb"), &cols));
+    }
+
+    #[test]
+    fn test_eval_where_like_empty_value() {
+        let h = where_handler();
+        let cols = city_columns();
+        let empty = vec!["".to_string(), "1".to_string()];
+
+        // Empty value does not match `a%` (needs a leading 'a')...
+        let a_pct = Expr::Like {
+            negated: false,
+            any: false,
+            expr: Box::new(col("name")),
+            pattern: Box::new(sval("a%")),
+            escape_char: None,
+        };
+        assert!(!h.eval_where(&a_pct, &empty, &cols));
+
+        // ...but does match the catch-all `%`.
+        let pct = Expr::Like {
+            negated: false,
+            any: false,
+            expr: Box::new(col("name")),
+            pattern: Box::new(sval("%")),
+            escape_char: None,
+        };
+        assert!(h.eval_where(&pct, &empty, &cols));
     }
 }

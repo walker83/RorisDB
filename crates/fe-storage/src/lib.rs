@@ -678,4 +678,41 @@ mod tests {
 
         storage.drop_table("db1", "t1").unwrap();
     }
+
+    #[test]
+    fn test_lock_table_recovers_from_poisoning() {
+        use std::panic::AssertUnwindSafe;
+
+        let dir = tempfile::tempdir().unwrap();
+        let storage = ParquetStorage::open(dir.path()).unwrap();
+
+        // Establish the per-table lock entry with a normal lock/unlock.
+        {
+            let _g = storage.lock_table("db1", "t1");
+        }
+
+        // Poison the per-table mutex: panic while holding the guard inside
+        // catch_unwind. The guard's Drop runs during unwind, which poisons the
+        // underlying Mutex (std poisons a mutex whose guard is dropped while
+        // the thread is panicking).
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let _guard = storage.lock_table("db1", "t1");
+            panic!("intentional panic to poison the per-table lock");
+        }));
+        assert!(result.is_err(), "the closure must have panicked");
+
+        // The per-table mutex is now poisoned. A subsequent lock on the same
+        // table must still succeed — poisoning is recovered via
+        // `unwrap_or_else(|e| e.into_inner())` — rather than propagating a
+        // PoisonError or panicking.
+        {
+            let _g = storage.lock_table("db1", "t1");
+        }
+
+        // A real write on that table still works end-to-end after poisoning.
+        let schema = test_schema();
+        storage.create_table("db1", "t1", schema).unwrap();
+        assert!(storage.table_exists("db1", "t1"));
+        storage.drop_table("db1", "t1").unwrap();
+    }
 }
